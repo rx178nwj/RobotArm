@@ -1,0 +1,3 @@
+[submodule "SteppingMotorDriver"]
+	path = SteppingMotorDriver
+	url = https://github.com/rx178nwj/SteppingMotorDriver.git
