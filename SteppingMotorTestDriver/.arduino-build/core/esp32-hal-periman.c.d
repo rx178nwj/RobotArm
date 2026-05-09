@@ -1,0 +1,30 @@
+H:\OneDrive\CraftWork\RobotArm2\SteppingMotorTestDriver\.arduino-build\core\esp32-hal-periman.c.o: \
+ C:\Users\watan\AppData\Local\Arduino15\packages\esp32\hardware\esp32\3.3.7\cores\esp32\esp32-hal-periman.c \
+ C:\Users\watan\AppData\Local\Arduino15\packages\esp32\hardware\esp32\3.3.7\cores\esp32\esp32-hal-log.h \
+ C:\Users\watan\AppData\Local\Arduino15\packages\esp32\tools\esp32c3-libs\3.3.7/qio_qspi/include/sdkconfig.h \
+ C:\Users\watan\AppData\Local\Arduino15\packages\esp32\tools\esp32c3-libs\3.3.7/include/esp_timer/include/esp_timer.h \
+ C:\Users\watan\AppData\Local\Arduino15\packages\esp32\tools\esp32c3-libs\3.3.7/include/newlib/platform_include/stdio.h \
+ C:\Users\watan\AppData\Local\Arduino15\packages\esp32\tools\esp32c3-libs\3.3.7/include/esp_common/include/esp_err.h \
+ C:\Users\watan\AppData\Local\Arduino15\packages\esp32\tools\esp32c3-libs\3.3.7/include/esp_common/include/esp_compiler.h \
+ C:\Users\watan\AppData\Local\Arduino15\packages\esp32\tools\esp32c3-libs\3.3.7/include/esp_hw_support/include/esp_etm.h \
+ C:\Users\watan\AppData\Local\Arduino15\packages\esp32\tools\esp32c3-libs\3.3.7/include/esp_rom/esp32c3/include/esp32c3/rom/ets_sys.h \
+ C:\Users\watan\AppData\Local\Arduino15\packages\esp32\tools\esp32c3-libs\3.3.7/include/log/include/esp_log.h \
+ C:\Users\watan\AppData\Local\Arduino15\packages\esp32\tools\esp32c3-libs\3.3.7/include/esp_rom/include/esp_rom_sys.h \
+ C:\Users\watan\AppData\Local\Arduino15\packages\esp32\tools\esp32c3-libs\3.3.7/include/soc/esp32c3/include/soc/reset_reasons.h \
+ C:\Users\watan\AppData\Local\Arduino15\packages\esp32\tools\esp32c3-libs\3.3.7/include/soc/esp32c3/include/soc/soc_caps.h \
+ C:\Users\watan\AppData\Local\Arduino15\packages\esp32\tools\esp32c3-libs\3.3.7/include/log/include/esp_log_config.h \
+ C:\Users\watan\AppData\Local\Arduino15\packages\esp32\tools\esp32c3-libs\3.3.7/include/log/include/esp_log_level.h \
+ C:\Users\watan\AppData\Local\Arduino15\packages\esp32\tools\esp32c3-libs\3.3.7/include/esp_common/include/esp_assert.h \
+ C:\Users\watan\AppData\Local\Arduino15\packages\esp32\tools\esp32c3-libs\3.3.7/include/log/include/esp_log_color.h \
+ C:\Users\watan\AppData\Local\Arduino15\packages\esp32\tools\esp32c3-libs\3.3.7/include/log/include/esp_log_buffer.h \
+ C:\Users\watan\AppData\Local\Arduino15\packages\esp32\tools\esp32c3-libs\3.3.7/include/log/include/esp_log_timestamp.h \
+ C:\Users\watan\AppData\Local\Arduino15\packages\esp32\tools\esp32c3-libs\3.3.7/include/log/include/esp_log_write.h \
+ C:\Users\watan\AppData\Local\Arduino15\packages\esp32\tools\esp32c3-libs\3.3.7/include/log/include/esp_log_format.h \
+ C:\Users\watan\AppData\Local\Arduino15\packages\esp32\tools\esp32c3-libs\3.3.7/include/log/include/esp_log_args.h \
+ C:\Users\watan\AppData\Local\Arduino15\packages\esp32\tools\esp32c3-libs\3.3.7/include/esp_common/include/esp_macros.h \
+ C:\Users\watan\AppData\Local\Arduino15\packages\esp32\tools\esp32c3-libs\3.3.7/include/esp_common/include/esp_assert.h \
+ C:\Users\watan\AppData\Local\Arduino15\packages\esp32\tools\esp32c3-libs\3.3.7/include/log/include/esp_log_attr.h \
+ C:\Users\watan\AppData\Local\Arduino15\packages\esp32\tools\esp32c3-libs\3.3.7/include/esp_common/include/esp_attr.h \
+ C:\Users\watan\AppData\Local\Arduino15\packages\esp32\tools\esp32c3-libs\3.3.7/include/log/include/esp_private/log_attr.h \
+ C:\Users\watan\AppData\Local\Arduino15\packages\esp32\hardware\esp32\3.3.7\cores\esp32\esp32-hal-periman.h \
+ C:\Users\watan\AppData\Local\Arduino15\packages\esp32\tools\esp32c3-libs\3.3.7/include/esp_common/include/esp_bit_defs.h

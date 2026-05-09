@@ -1,0 +1,141 @@
+<mxfile host="app.diagrams.net" modified="2026-05-05T11:40:00.000Z" agent="Codex" version="24.7.17">
+  <diagram id="xiao-tb6600-bjt" name="Page-1">
+    <mxGraphModel dx="1600" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title" value="XIAO ESP32C3 - TB6600 Compatible Driver Wiring (NPN Transistor Interface)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=20;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="20" width="860" height="30" as="geometry"/>
+        </mxCell>
+        <mxCell id="xiao" value="XIAO ESP32C3&#xa;&#xa;D6: STEP&#xa;D5: DIR&#xa;D4: ENA&#xa;GND" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=16;" vertex="1" parent="1">
+          <mxGeometry x="40" y="110" width="170" height="190" as="geometry"/>
+        </mxCell>
+        <mxCell id="driver" value="Microstep Driver&#xa;(TB6600 compatible)&#xa;&#xa;PUL+ / PUL-&#xa;DIR+ / DIR-&#xa;ENA+ / ENA-&#xa;&#xa;Motor PSU: VCC / GND&#xa;Motor: A+, A-, B+, B-" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=16;" vertex="1" parent="1">
+          <mxGeometry x="1120" y="90" width="240" height="260" as="geometry"/>
+        </mxCell>
+        <mxCell id="v5" value="5V" style="ellipse;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=16;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="380" y="70" width="70" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="gnd" value="Common GND" style="shape=mxgraph.electrical.ground;html=1;strokeColor=#000000;fillColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="360" y="650" width="80" height="60" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="q1" value="Q1&#xa;2N3904 / PN2222A" style="shape=process;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="520" y="140" width="150" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="q2" value="Q2&#xa;2N3904 / PN2222A" style="shape=process;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="520" y="310" width="150" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="q3" value="Q3&#xa;2N3904 / PN2222A" style="shape=process;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="520" y="480" width="150" height="80" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="rb1" value="2.2kΩ&#xa;(base)" style="shape=process;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="270" y="155" width="80" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="rb2" value="2.2kΩ&#xa;(base)" style="shape=process;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="270" y="325" width="80" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="rb3" value="2.2kΩ&#xa;(base)" style="shape=process;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="270" y="495" width="80" height="40" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="rpd1" value="10kΩ&#xa;(pull-down)" style="shape=process;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="390" y="200" width="90" height="45" as="geometry"/>
+        </mxCell>
+        <mxCell id="rpd2" value="10kΩ&#xa;(pull-down)" style="shape=process;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="390" y="370" width="90" height="45" as="geometry"/>
+        </mxCell>
+        <mxCell id="rpd3" value="10kΩ&#xa;(pull-down)" style="shape=process;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="390" y="540" width="90" height="45" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="rin1" value="330-470Ω" style="shape=process;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="830" y="140" width="90" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="rin2" value="330-470Ω" style="shape=process;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="830" y="310" width="90" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="rin3" value="330-470Ω" style="shape=process;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="830" y="480" width="90" height="40" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="notes" value="Notes:&#xa;1. PUL+ / DIR+ / ENA+ are fed from 5V through 330-470Ω.&#xa;2. Transistor emitter goes to GND, collector goes to PUL- / DIR- / ENA-.&#xa;3. GPIO HIGH drives base current through 2.2kΩ and turns the transistor on.&#xa;4. ENA is optional for first tests.&#xa;5. Do not connect 5V directly to XIAO GPIO." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=14;align=left;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="40" y="730" width="860" height="120" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="e1" style="endArrow=none;html=1;strokeWidth=2;" edge="1" parent="1" source="xiao" target="rb1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e2" value="D6" style="endArrow=none;html=1;strokeWidth=2;" edge="1" parent="1" source="rb1" target="q1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e3" style="endArrow=none;html=1;strokeWidth=2;" edge="1" parent="1" source="xiao" target="rb2">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e4" value="D5" style="endArrow=none;html=1;strokeWidth=2;" edge="1" parent="1" source="rb2" target="q2">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e5" style="endArrow=none;html=1;strokeWidth=2;" edge="1" parent="1" source="xiao" target="rb3">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e6" value="D4" style="endArrow=none;html=1;strokeWidth=2;" edge="1" parent="1" source="rb3" target="q3">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="e7" value="10kΩ to GND" style="endArrow=none;html=1;dashed=1;strokeWidth=2;" edge="1" parent="1" source="rpd1" target="q1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e8" value="10kΩ to GND" style="endArrow=none;html=1;dashed=1;strokeWidth=2;" edge="1" parent="1" source="rpd2" target="q2">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e9" value="10kΩ to GND" style="endArrow=none;html=1;dashed=1;strokeWidth=2;" edge="1" parent="1" source="rpd3" target="q3">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="e10" value="5V" style="endArrow=none;html=1;strokeWidth=2;strokeColor=#d79b00;" edge="1" parent="1" source="v5" target="rin1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e11" value="5V" style="endArrow=none;html=1;strokeWidth=2;strokeColor=#d79b00;" edge="1" parent="1" source="v5" target="rin2">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e12" value="5V" style="endArrow=none;html=1;strokeWidth=2;strokeColor=#d79b00;" edge="1" parent="1" source="v5" target="rin3">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="e13" value="to PUL+" style="endArrow=block;html=1;strokeWidth=2;" edge="1" parent="1" source="rin1" target="driver">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e14" value="to DIR+" style="endArrow=block;html=1;strokeWidth=2;" edge="1" parent="1" source="rin2" target="driver">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e15" value="to ENA+" style="endArrow=block;html=1;strokeWidth=2;" edge="1" parent="1" source="rin3" target="driver">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="e16" value="collector to PUL-" style="endArrow=block;html=1;strokeWidth=2;strokeColor=#82b366;" edge="1" parent="1" source="q1" target="driver">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e17" value="collector to DIR-" style="endArrow=block;html=1;strokeWidth=2;strokeColor=#82b366;" edge="1" parent="1" source="q2" target="driver">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e18" value="collector to ENA-" style="endArrow=block;html=1;strokeWidth=2;strokeColor=#82b366;" edge="1" parent="1" source="q3" target="driver">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="e19" value="emitter to GND" style="endArrow=none;html=1;strokeWidth=2;" edge="1" parent="1" source="q1" target="gnd">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e20" value="emitter to GND" style="endArrow=none;html=1;strokeWidth=2;" edge="1" parent="1" source="q2" target="gnd">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e21" value="emitter to GND" style="endArrow=none;html=1;strokeWidth=2;" edge="1" parent="1" source="q3" target="gnd">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e22" value="XIAO GND" style="endArrow=none;html=1;strokeWidth=2;" edge="1" parent="1" source="xiao" target="gnd">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

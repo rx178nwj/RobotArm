@@ -1,0 +1,59 @@
+[
+  {
+    "added_include_path": "C:\\Users\\watan\\AppData\\Local\\Arduino15\\packages\\esp32\\hardware\\esp32\\3.3.7\\cores\\esp32"
+  },
+  {
+    "added_include_path": "C:\\Users\\watan\\AppData\\Local\\Arduino15\\packages\\esp32\\hardware\\esp32\\3.3.7\\variants\\XIAO_ESP32C3"
+  },
+  {
+    "compile": {
+      "source_path": "H:\\OneDrive\\CraftWork\\RobotArm2\\SteppingMotorTestDriver\\.arduino-build\\sketch\\SteppingMotorTestDriver.ino.cpp",
+      "object_path": "H:\\OneDrive\\CraftWork\\RobotArm2\\SteppingMotorTestDriver\\.arduino-build\\sketch\\SteppingMotorTestDriver.ino.cpp.o",
+      "depfile_path": "H:\\OneDrive\\CraftWork\\RobotArm2\\SteppingMotorTestDriver\\.arduino-build\\sketch\\SteppingMotorTestDriver.ino.cpp.d"
+    },
+    "compile_task": {
+      "args": [
+        "C:\\Users\\watan\\AppData\\Local\\Arduino15\\packages\\esp32\\tools\\esp-rv32\\2511/bin/riscv32-esp-elf-g++",
+        "-c",
+        "@C:\\Users\\watan\\AppData\\Local\\Arduino15\\packages\\esp32\\tools\\esp32c3-libs\\3.3.7/flags/cpp_flags",
+        "-w",
+        "-Os",
+        "-Werror=return-type",
+        "-w",
+        "-x",
+        "c++",
+        "-E",
+        "-CC",
+        "-DF_CPU=160000000L",
+        "-DARDUINO=10607",
+        "-DARDUINO_XIAO_ESP32C3",
+        "-DARDUINO_ARCH_ESP32",
+        "-DARDUINO_BOARD=\"XIAO_ESP32C3\"",
+        "-DARDUINO_VARIANT=\"XIAO_ESP32C3\"",
+        "-DARDUINO_PARTITION_default",
+        "-DARDUINO_HOST_OS=\"windows\"",
+        "-DARDUINO_FQBN=\"esp32:esp32:XIAO_ESP32C3\"",
+        "-DESP32=ESP32",
+        "-DCORE_DEBUG_LEVEL=0",
+        "-DARDUINO_USB_MODE=1",
+        "-DARDUINO_USB_CDC_ON_BOOT=1",
+        "@C:\\Users\\watan\\AppData\\Local\\Arduino15\\packages\\esp32\\tools\\esp32c3-libs\\3.3.7/flags/defines",
+        "-IH:\\OneDrive\\CraftWork\\RobotArm2\\SteppingMotorTestDriver",
+        "-iprefix",
+        "C:\\Users\\watan\\AppData\\Local\\Arduino15\\packages\\esp32\\tools\\esp32c3-libs\\3.3.7/include/",
+        "@C:\\Users\\watan\\AppData\\Local\\Arduino15\\packages\\esp32\\tools\\esp32c3-libs\\3.3.7/flags/includes",
+        "-IC:\\Users\\watan\\AppData\\Local\\Arduino15\\packages\\esp32\\tools\\esp32c3-libs\\3.3.7/qio_qspi/include",
+        "-IC:\\Users\\watan\\AppData\\Local\\Arduino15\\packages\\esp32\\hardware\\esp32\\3.3.7\\cores\\esp32",
+        "-IC:\\Users\\watan\\AppData\\Local\\Arduino15\\packages\\esp32\\hardware\\esp32\\3.3.7\\variants\\XIAO_ESP32C3",
+        "@H:\\OneDrive\\CraftWork\\RobotArm2\\SteppingMotorTestDriver\\.arduino-build/build_opt.h",
+        "@H:\\OneDrive\\CraftWork\\RobotArm2\\SteppingMotorTestDriver\\.arduino-build/file_opts",
+        "H:\\OneDrive\\CraftWork\\RobotArm2\\SteppingMotorTestDriver\\.arduino-build\\sketch\\SteppingMotorTestDriver.ino.cpp",
+        "-o",
+        "nul"
+      ]
+    }
+  },
+  {
+    "missing_include_h": ""
+  }
+]
