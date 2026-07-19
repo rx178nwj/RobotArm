@@ -1,0 +1,21 @@
+{
+  "name": "multi-i2c-bridge-monitor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Desktop monitor for multi_i2c_bridge devices",
+  "main": "dist/main/main.js",
+  "scripts": {
+    "build": "tsc && node scripts/copy-static.mjs",
+    "start": "npm run build && electron .",
+    "dev": "npm run build && electron ."
+  },
+  "dependencies": {
+    "@serialport/parser-readline": "^13.0.0",
+    "serialport": "^13.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "electron": "^37.2.0",
+    "typescript": "^5.8.3"
+  }
+}

@@ -1,0 +1,403 @@
+<title>マルチI2Cブリッジ アーキテクチャ概要</title>
+<style>
+  :root {
+    --bg: #eef2f7;
+    --surface: #ffffff;
+    --surface-2: #f6f9fc;
+    --ink: #131b24;
+    --muted: #5a6a78;
+    --faint: #8695a3;
+    --border: #d2dde8;
+    --border-strong: #b4c4d3;
+    --up: #2563a8;      /* 上流バス */
+    --down: #0e8f83;    /* 下流バス */
+    --sensor: #b9722a;  /* センサ側 */
+    --bridge: #6b4bb0;  /* ブリッジ強調 */
+    --good: #2f9e5f;
+    --warn: #c98a12;
+    --shadow: 0 1px 2px rgba(19,27,36,.06), 0 6px 20px rgba(19,27,36,.06);
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
+    --sans: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", "Hiragino Kaku Gothic ProN", "Noto Sans JP", Meiryo, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0c1015; --surface: #141b23; --surface-2: #1a222c;
+      --ink: #e7eef5; --muted: #9aa8b5; --faint: #6d7c8a;
+      --border: #263039; --border-strong: #34424e;
+      --up: #5b9bd8; --down: #35b7a8; --sensor: #d79753; --bridge: #a488e0;
+      --good: #52c07f; --warn: #e0ab4a;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 26px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="light"] {
+    --bg: #eef2f7; --surface: #ffffff; --surface-2: #f6f9fc;
+    --ink: #131b24; --muted: #5a6a78; --faint: #8695a3;
+    --border: #d2dde8; --border-strong: #b4c4d3;
+    --up: #2563a8; --down: #0e8f83; --sensor: #b9722a; --bridge: #6b4bb0;
+    --good: #2f9e5f; --warn: #c98a12;
+    --shadow: 0 1px 2px rgba(19,27,36,.06), 0 6px 20px rgba(19,27,36,.06);
+  }
+  :root[data-theme="dark"] {
+    --bg: #0c1015; --surface: #141b23; --surface-2: #1a222c;
+    --ink: #e7eef5; --muted: #9aa8b5; --faint: #6d7c8a;
+    --border: #263039; --border-strong: #34424e;
+    --up: #5b9bd8; --down: #35b7a8; --sensor: #d79753; --bridge: #a488e0;
+    --good: #52c07f; --warn: #e0ab4a;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 26px rgba(0,0,0,.35);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: var(--sans); line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: clamp(20px, 4vw, 56px) clamp(16px, 4vw, 40px) 72px; }
+
+  /* ---- header ---- */
+  header { border-bottom: 1px solid var(--border); padding-bottom: 26px; margin-bottom: 34px; }
+  .eyebrow {
+    font-family: var(--mono); font-size: 12px; letter-spacing: .16em;
+    text-transform: uppercase; color: var(--up); font-weight: 600; margin: 0 0 12px;
+  }
+  h1 { font-size: clamp(26px, 4.4vw, 40px); line-height: 1.15; margin: 0 0 14px; text-wrap: balance; font-weight: 700; letter-spacing: -.01em; }
+  .lede { font-size: clamp(15px, 1.6vw, 17px); color: var(--muted); max-width: 62ch; margin: 0; }
+  .meta { display: flex; flex-wrap: wrap; gap: 8px 10px; margin-top: 20px; }
+  .chip {
+    font-family: var(--mono); font-size: 12px; padding: 4px 10px; border-radius: 999px;
+    background: var(--surface); border: 1px solid var(--border); color: var(--muted); white-space: nowrap;
+  }
+  .chip b { color: var(--ink); font-weight: 600; }
+
+  section { margin-top: 46px; }
+  h2 {
+    font-size: 13px; font-family: var(--mono); letter-spacing: .14em; text-transform: uppercase;
+    color: var(--faint); margin: 0 0 20px; font-weight: 600;
+    display: flex; align-items: center; gap: 12px;
+  }
+  h2::before { content: ""; width: 22px; height: 2px; background: var(--border-strong); border-radius: 2px; }
+
+  /* ---- flow diagram ---- */
+  .flow { display: flex; flex-direction: column; align-items: center; }
+  .node {
+    width: 100%; max-width: 620px; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; box-shadow: var(--shadow); padding: 16px 18px; position: relative;
+  }
+  .node-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .node-title { font-weight: 700; font-size: 16px; }
+  .node-tag { font-family: var(--mono); font-size: 11px; color: var(--faint); }
+  .node-sub { color: var(--muted); font-size: 13.5px; margin-top: 4px; }
+  .node.accent-up { border-top: 3px solid var(--up); }
+  .node.accent-sensor { border-top: 3px solid var(--sensor); }
+
+  /* bus connector */
+  .bus { display: flex; flex-direction: column; align-items: center; gap: 0; padding: 6px 0; }
+  .bus-line { width: 2px; height: 20px; background: var(--c, var(--border-strong)); }
+  .bus-label {
+    font-family: var(--mono); font-size: 11.5px; padding: 3px 10px; border-radius: 6px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    color: var(--c, var(--muted)); white-space: nowrap; font-weight: 600;
+  }
+  .bus.up { --c: var(--up); }
+  .bus.down { --c: var(--down); }
+
+  /* bridge internal */
+  .bridge {
+    width: 100%; max-width: 720px; background: var(--surface); border: 1px solid var(--border);
+    border-top: 3px solid var(--bridge); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden;
+  }
+  .bridge-top {
+    padding: 14px 18px; display: flex; align-items: baseline; justify-content: space-between;
+    gap: 10px; flex-wrap: wrap; border-bottom: 1px dashed var(--border);
+  }
+  .bridge-top .node-title { color: var(--bridge); }
+  .cores { display: grid; grid-template-columns: 1fr auto 1fr; align-items: stretch; }
+  @media (max-width: 620px) { .cores { grid-template-columns: 1fr; } }
+  .core { padding: 16px 18px; }
+  .core h3 { margin: 0 0 8px; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+  .core .who { font-family: var(--mono); font-size: 11px; color: #fff; background: var(--dot); padding: 2px 7px; border-radius: 5px; font-weight: 600; }
+  .core.c0 { --dot: var(--up); }
+  .core.c1 { --dot: var(--down); }
+  .core ul { margin: 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
+  .core ul li { margin: 3px 0; }
+  .midbuf {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 10px; gap: 6px; border-left: 1px dashed var(--border); border-right: 1px dashed var(--border);
+    background: var(--surface-2); min-width: 128px;
+  }
+  @media (max-width: 620px) { .midbuf { border-left: none; border-right: none; border-top: 1px dashed var(--border); border-bottom: 1px dashed var(--border); } }
+  .midbuf .lbl { font-family: var(--mono); font-size: 10.5px; letter-spacing: .06em; color: var(--faint); text-transform: uppercase; text-align: center; }
+  .buf-pair { display: flex; gap: 6px; }
+  .buf { width: 30px; height: 22px; border: 1px solid var(--border-strong); border-radius: 5px; background: var(--surface); font-family: var(--mono); font-size: 10px; color: var(--muted); display: flex; align-items: center; justify-content: center; }
+  .buf.on { border-color: var(--bridge); color: var(--bridge); box-shadow: inset 0 0 0 1px var(--bridge); }
+  .arrow { font-size: 15px; color: var(--bridge); line-height: 1; }
+
+  /* mux + sensors */
+  .mux { max-width: 720px; }
+  .fanout { display: flex; justify-content: center; gap: clamp(10px, 3vw, 26px); width: 100%; max-width: 720px; }
+  .leg { display: flex; flex-direction: column; align-items: center; flex: 1; max-width: 200px; }
+  .sensor {
+    width: 100%; background: var(--surface); border: 1px solid var(--border); border-top: 3px solid var(--sensor);
+    border-radius: 10px; box-shadow: var(--shadow); padding: 12px 12px; text-align: center;
+  }
+  .sensor .s-name { font-weight: 700; font-size: 14px; }
+  .sensor .s-addr { font-family: var(--mono); font-size: 11px; color: var(--sensor); margin-top: 2px; }
+  .sensor .s-sub { font-size: 11.5px; color: var(--muted); margin-top: 4px; }
+  @media (max-width: 520px) { .fanout { flex-direction: column; align-items: center; } .leg { max-width: 260px; } }
+
+  /* generic cards grid */
+  .grid { display: grid; gap: 16px; }
+  .cols-2 { grid-template-columns: repeat(2, 1fr); }
+  .cols-3 { grid-template-columns: repeat(3, 1fr); }
+  @media (max-width: 720px) { .cols-2, .cols-3 { grid-template-columns: 1fr; } }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; box-shadow: var(--shadow); }
+  .card h3 { margin: 0 0 8px; font-size: 15px; }
+  .card p { margin: 0; color: var(--muted); font-size: 13.5px; }
+  .card .k { font-family: var(--mono); font-size: 11px; color: var(--faint); letter-spacing: .08em; text-transform: uppercase; }
+
+  /* timing bar */
+  .timing { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; box-shadow: var(--shadow); }
+  .budget { font-family: var(--mono); font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+  .bar { position: relative; height: 46px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .bar .seg { position: absolute; top: 0; bottom: 0; display: flex; align-items: center; justify-content: center; font-family: var(--mono); font-size: 11.5px; color: #fff; font-weight: 600; }
+  .bar .seg.up { left: 0; width: 21%; background: var(--up); }
+  .bar .seg.free { left: 21%; right: 0; color: var(--faint); background: transparent; }
+  .track { margin-top: 14px; }
+  .track .tlabel { display: flex; justify-content: space-between; font-size: 12.5px; margin-bottom: 5px; }
+  .track .tlabel .name { font-weight: 600; }
+  .track .tlabel .val { font-family: var(--mono); color: var(--muted); }
+  .mini { height: 12px; border-radius: 6px; background: var(--surface-2); border: 1px solid var(--border); overflow: hidden; }
+  .mini > span { display: block; height: 100%; }
+  .mini .fill-down { background: var(--down); }
+  .note-inline { font-size: 12.5px; color: var(--muted); margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--border); }
+
+  /* MCU decision */
+  .verdict { display: grid; grid-template-columns: 1.15fr 1fr; gap: 16px; }
+  @media (max-width: 720px) { .verdict { grid-template-columns: 1fr; } }
+  .mcu { border-radius: 12px; padding: 18px 20px; border: 1px solid var(--border); box-shadow: var(--shadow); background: var(--surface); }
+  .mcu.win { border: 1.5px solid var(--good); background: color-mix(in srgb, var(--good) 7%, var(--surface)); }
+  .mcu .badge { font-family: var(--mono); font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 999px; letter-spacing: .05em; }
+  .mcu.win .badge { background: var(--good); color: #fff; }
+  .mcu.alt .badge { background: var(--surface-2); color: var(--muted); border: 1px solid var(--border); }
+  .mcu .name { font-size: 18px; font-weight: 700; margin: 10px 0 4px; }
+  .mcu ul { margin: 10px 0 0; padding-left: 17px; color: var(--muted); font-size: 13px; }
+  .mcu ul li { margin: 4px 0; }
+  .mcu ul li b { color: var(--ink); font-weight: 600; }
+
+  /* decisions list */
+  .decisions { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+  .decisions li { display: flex; gap: 12px; align-items: flex-start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 15px; box-shadow: var(--shadow); }
+  .decisions .tick { color: var(--good); font-weight: 700; font-family: var(--mono); flex-shrink: 0; }
+  .decisions .txt { font-size: 13.5px; }
+  .decisions .txt b { font-weight: 600; }
+  .decisions .txt span { color: var(--muted); }
+
+  footer { margin-top: 52px; padding-top: 22px; border-top: 1px solid var(--border); color: var(--faint); font-size: 12.5px; font-family: var(--mono); display: flex; flex-wrap: wrap; gap: 6px 18px; }
+  footer a { color: var(--up); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+
+  .caption { text-align: center; font-size: 12px; color: var(--faint); margin-top: 14px; font-family: var(--mono); }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .node, .bridge, .mux, .fanout, .card, .timing, .mcu, .decisions li { animation: rise .5s cubic-bezier(.2,.7,.3,1) both; }
+    @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+  }
+</style>
+
+<div class="wrap">
+  <header>
+    <p class="eyebrow">System Architecture · 1-page overview</p>
+    <h1>マルチI2Cブリッジ アーキテクチャ概要</h1>
+    <p class="lede">アドレス固定（0x36）の AS5600 磁気角度センサ×3ch を、TCA9548A と RP2040 ブリッジを介して単一I2Cで集約。上位からは「1個のI2Cセンサ（0x42）」に見え、3ch分の角度を1kHzで一括取得できる。</p>
+    <div class="meta">
+      <span class="chip">開発対象 <b>RP2040 ブリッジ FW</b></span>
+      <span class="chip">上流/下流 <b>I2C 400kHz</b></span>
+      <span class="chip">読み出し <b>3ch · 1kHz</b></span>
+      <span class="chip">データ齢 <b>≤0.55ms</b></span>
+      <span class="chip">センサ <b>RAW_ANGLE · SF=4x</b></span>
+      <span class="chip">更新 <b>2026-07-10</b></span>
+    </div>
+  </header>
+
+  <!-- ============ SIGNAL CHAIN ============ -->
+  <section>
+    <h2>信号チェーン & 役割分担</h2>
+    <div class="flow">
+      <!-- controller -->
+      <div class="node accent-up">
+        <div class="node-head">
+          <span class="node-title">Controller（上位）</span>
+          <span class="node-tag">I2C Master</span>
+        </div>
+        <div class="node-sub">1ms周期で <code>CH0_ANGLE</code> から6バイト一括リード → 3ch角度を取得。mux/センサの存在は非可視。</div>
+      </div>
+
+      <div class="bus up">
+        <span class="bus-line"></span>
+        <span class="bus-label">I2C0 · 上流 · 400kHz · addr 0x42 · 1kHz read</span>
+        <span class="bus-line"></span>
+      </div>
+
+      <!-- bridge -->
+      <div class="bridge">
+        <div class="bridge-top">
+          <span class="node-title">RP2040 ブリッジ（開発対象）</span>
+          <span class="node-tag">Slave ⇔ Master 変換 / デュアルコア</span>
+        </div>
+        <div class="cores">
+          <div class="core c0">
+            <h3><span class="who">Core0</span> 上流応答</h3>
+            <ul>
+              <li>I2C0 スレーブ ISR</li>
+              <li>レジスタマップ / ポインタ管理</li>
+              <li>読出開始時にスナップショット確定</li>
+              <li>キャッシュ即応答（下流を待たない）</li>
+            </ul>
+          </div>
+          <div class="midbuf">
+            <span class="lbl">ダブルバッファ<br>atomic swap</span>
+            <div class="buf-pair">
+              <span class="buf on">buf0</span>
+              <span class="buf">buf1</span>
+            </div>
+            <span class="arrow">▲</span>
+            <span class="lbl" style="text-transform:none">C1→C0<br>ロックフリー</span>
+          </div>
+          <div class="core c1">
+            <h3><span class="who">Core1</span> 下流ポーリング</h3>
+            <ul>
+              <li>I2C1 マスタ（全力巡回 ~1.8kHz）</li>
+              <li>mux切替 → AS5600読出 → shadow</li>
+              <li>全ch完了で publish（部分更新禁止）</li>
+              <li>バス復旧 / WDT相互監視</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="bus down">
+        <span class="bus-line"></span>
+        <span class="bus-label">I2C1 · 下流 · 400kHz · 排他ch選択</span>
+        <span class="bus-line"></span>
+      </div>
+
+      <!-- mux -->
+      <div class="node mux" style="border-top:3px solid var(--down)">
+        <div class="node-head">
+          <span class="node-title">TCA9548A</span>
+          <span class="node-tag">I2C 8ch mux · addr 0x70</span>
+        </div>
+        <div class="node-sub">各chを独立バスに分離し、0x36固定のAS5600同士のアドレス衝突を回避。CH0/1/2を時分割で排他選択。</div>
+      </div>
+
+      <div class="bus down"><span class="bus-line"></span></div>
+
+      <!-- sensors -->
+      <div class="fanout">
+        <div class="leg">
+          <div class="bus down" style="padding-top:0"><span class="bus-label">CH0</span><span class="bus-line"></span></div>
+          <div class="sensor"><div class="s-name">AS5600</div><div class="s-addr">0x36</div><div class="s-sub">12bit 角度 ch0</div></div>
+        </div>
+        <div class="leg">
+          <div class="bus down" style="padding-top:0"><span class="bus-label">CH1</span><span class="bus-line"></span></div>
+          <div class="sensor"><div class="s-name">AS5600</div><div class="s-addr">0x36</div><div class="s-sub">12bit 角度 ch1</div></div>
+        </div>
+        <div class="leg">
+          <div class="bus down" style="padding-top:0"><span class="bus-label">CH2</span><span class="bus-line"></span></div>
+          <div class="sensor"><div class="s-name">AS5600</div><div class="s-addr">0x36</div><div class="s-sub">12bit 角度 ch2</div></div>
+        </div>
+      </div>
+      <p class="caption">全系 3.3V／レベル変換不要 · mux各chにプルアップ必須</p>
+    </div>
+  </section>
+
+  <!-- ============ DATA INTEGRITY ============ -->
+  <section>
+    <h2>データフロー & 整合性</h2>
+    <div class="grid cols-3">
+      <div class="card">
+        <div class="k">Write / publish</div>
+        <h3>下流 → shadow → publish</h3>
+        <p>Core1 が非activeバッファに全ch書込後、メモリバリアを挟んで active index を原子的にswap。部分更新は決してpublishしない。</p>
+      </div>
+      <div class="card">
+        <div class="k">Read / snapshot</div>
+        <h3>読出開始時にラッチ</h3>
+        <p>上位の読出トランザクション開始で active を <code>tx_staging</code> へ memcpy。バースト途中のswapに影響されず、6バイトが一貫スナップショットになる。</p>
+      </div>
+      <div class="card">
+        <div class="k">No clock stretch</div>
+        <h3>非同期キャッシュ応答</h3>
+        <p>読出はpublish済み最新値を即返す。データ経路でクロックストレッチせず、マスタ非依存で堅牢。tearも発生しない。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ TIMING ============ -->
+  <section>
+    <h2>タイミング収支（1kHz = 1ms 予算）</h2>
+    <div class="timing">
+      <div class="budget">上流バス占有 — 1ms 周期あたり</div>
+      <div class="bar">
+        <span class="seg up">上流 3ch一括リード ≈ 210µs (21%)</span>
+        <span class="seg free">空き 79% — 余裕</span>
+      </div>
+      <div class="track">
+        <div class="tlabel"><span class="name">下流 3ch巡回（別コア・別バスで並行）</span><span class="val">≈ 550µs / 巡回（~1.8kHz）</span></div>
+        <div class="mini"><span class="fill-down" style="width:55%"></span></div>
+      </div>
+      <p class="note-inline">上流・下流は<b>別バス・別コア</b>で並行動作するため加算されない。律速は下流巡回（≈550µs）で、上位の各1kHz読み出しは常に<b>データ齢0.55ms以内</b>の値を得る。将来さらに鮮度が必要なら下流を1MHz(FM+)へ移行可能。</p>
+    </div>
+  </section>
+
+  <!-- ============ MCU DECISION ============ -->
+  <section>
+    <h2>ブリッジMCU選定</h2>
+    <div class="verdict">
+      <div class="mcu win">
+        <span class="badge">採用 · 本命</span>
+        <div class="name">RP2040</div>
+        <ul>
+          <li><b>I2Cスレーブが堅牢</b>・実績豊富（本システムの核）</li>
+          <li><b>デュアルコア</b>で上流応答と下流ポーリングを物理分離</li>
+          <li><b>PIO</b>で将来拡張可（真の同時サンプリングも代替可能）</li>
+          <li>無線なしで<b>決定性が高い</b>／最安クラス</li>
+        </ul>
+      </div>
+      <div class="mcu alt">
+        <span class="badge">次点 · 条件付き</span>
+        <div class="name">ESP32-C3</div>
+        <ul>
+          <li>I2Cスレーブに<b>歴史的な制約</b>／クセ</li>
+          <li>無線スタックが<b>リアルタイム性のリスク</b></li>
+          <li>Wi-Fi/BLE内蔵・Flash内蔵は利点</li>
+          <li><b>無線送信/OTAが要件化した場合</b>に再検討</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ DECISIONS ============ -->
+  <section>
+    <h2>確定した設計判断</h2>
+    <ul class="decisions">
+      <li><span class="tick">✓</span><span class="txt"><b>通信モデル：レジスタマップ型</b> <span>— ポインタ＋auto-increment。上位は標準I2Cドライバを流用可。</span></span></li>
+      <li><span class="tick">✓</span><span class="txt"><b>速度：上下流とも 400kHz</b> <span>— 1kHz/3ch要件を満たす。1MHz(FM+)へ移行可能な設計。</span></span></li>
+      <li><span class="tick">✓</span><span class="txt"><b>同時性：各軸を個別に1kHz監視</b> <span>— TCA9548A方式を維持（ch間スキュー≈340µsは許容、PIO並列は不採用）。</span></span></li>
+      <li><span class="tick">✓</span><span class="txt"><b>整合性：ダブルバッファ＋スナップショット</b> <span>— ロックフリーで一貫読み出しを保証。</span></span></li>
+      <li><span class="tick">✓</span><span class="txt"><b>実装：ベアメタル（RTOSなし）・pico-sdk / C</b> <span>— 2コア=2役割。WDT相互監視で自己回復。</span></span></li>
+      <li><span class="tick">✓</span><span class="txt"><b>電源：全系3.3V</b> <span>— レベル変換不要（将来5V化用フットプリントは予約推奨）。</span></span></li>
+      <li><span class="tick">✓</span><span class="txt"><b>AS5600設定：RAW_ANGLE ＋ CONF=0x0A00</b> <span>— SF=4x(応答0.55ms)＋高速フィルタ7LSB。起動時に揮発書込、E2E遅延≈1.6ms。</span></span></li>
+      <li><span class="tick">✓</span><span class="txt"><b>回転方向：DIRをブリッジがch毎に駆動</b> <span>— GP5/6/7で各AS5600のDIRを独立制御（各プルダウン10kΩ）。レジスタ0x32 DIR_CONFIGで設定、既定は全ch CW増加。</span></span></li>
+      <li><span class="tick">✓</span><span class="txt"><b>接続ch数：1ch/2ch/3ch対応</b> <span>— 起動時自動検出（CH_PRESENT 0x18）＋上位上書き（CH_ENABLE 0x36）。有効chのみ巡回、無効ch(未使用)は角度0xFFFF・DEGRADED対象外。配線どおりなら無設定で正常起動。</span></span></li>
+    </ul>
+  </section>
+
+  <footer>
+    <span>出典ドキュメント:</span>
+    <a href="design_spec.md">design_spec.md</a>
+    <a href="i2c_architecture.md">i2c_architecture.md</a>
+    <a href="software_architecture.md">software_architecture.md</a>
+    <a href="as5600_config.md">as5600_config.md</a>
+  </footer>
+</div>

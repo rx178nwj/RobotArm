@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "kicad": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "C:\\mcp\\kicad-mcp-server",
+        "run",
+        "kicad-mcp-server"
+      ],
+      "env": {
+        "PYTHONPATH": "C:\\Program Files\\KiCad\\9.0\\bin\\python\\site-packages"
+      }
+    }
+  }
+}

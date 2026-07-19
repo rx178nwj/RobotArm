@@ -1,0 +1,227 @@
+(footprint "Main_Board"
+	(version 20260206)
+	(generator "pcbnew")
+	(generator_version "10.0")
+	(layer "F.Cu")
+	(property "Reference" "REF**"
+		(at 0 -0.5 0)
+		(unlocked yes)
+		(layer "F.SilkS")
+		(uuid "5f004853-a6e7-4964-b371-c2647f0d5f31")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.1)
+			)
+		)
+	)
+	(property "Value" "Main_Board"
+		(at 0 1 0)
+		(unlocked yes)
+		(layer "F.Fab")
+		(uuid "c8f2110c-2b0f-4e04-9d03-79086f09f591")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Datasheet" ""
+		(at 0 0 0)
+		(unlocked yes)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "81fd0be6-5a72-48fe-b41d-759eb3626941")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Description" ""
+		(at 0 0 0)
+		(unlocked yes)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "8d6b5457-41a2-48d7-8450-e912a78de68d")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(attr smd)
+	(duplicate_pad_numbers_are_jumpers no)
+	(fp_line
+		(start -30 -27)
+		(end -30 27)
+		(stroke
+			(width 0.05)
+			(type default)
+		)
+		(layer "Edge.Cuts")
+		(uuid "34dff034-f947-4a39-a38d-c0818e27217d")
+	)
+	(fp_line
+		(start -27 30)
+		(end 27 30)
+		(stroke
+			(width 0.05)
+			(type default)
+		)
+		(layer "Edge.Cuts")
+		(uuid "643ac752-d6ef-401f-ae2b-f46fb0172770")
+	)
+	(fp_line
+		(start 27 -30)
+		(end -27 -30)
+		(stroke
+			(width 0.05)
+			(type default)
+		)
+		(layer "Edge.Cuts")
+		(uuid "eee5852b-9a94-4473-86ae-159f75eeca9d")
+	)
+	(fp_line
+		(start 30 27)
+		(end 30 -27)
+		(stroke
+			(width 0.05)
+			(type default)
+		)
+		(layer "Edge.Cuts")
+		(uuid "02ba31c0-3420-494b-8377-e23ceed054ba")
+	)
+	(fp_arc
+		(start -30 -27)
+		(mid -29.12132 -29.12132)
+		(end -27 -30)
+		(stroke
+			(width 0.05)
+			(type default)
+		)
+		(layer "Edge.Cuts")
+		(uuid "811e2556-7084-4fca-ad46-d5e0f2b59199")
+	)
+	(fp_arc
+		(start -27 30)
+		(mid -29.12132 29.12132)
+		(end -30 27)
+		(stroke
+			(width 0.05)
+			(type default)
+		)
+		(layer "Edge.Cuts")
+		(uuid "a8f7809e-89f0-4ddd-a39c-f874c7724378")
+	)
+	(fp_arc
+		(start 27 -30)
+		(mid 29.12132 -29.12132)
+		(end 30 -27)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(layer "Edge.Cuts")
+		(uuid "2e7f44fb-2129-43c5-9912-c31e10127adf")
+	)
+	(fp_arc
+		(start 30 27)
+		(mid 29.12132 29.12132)
+		(end 27 30)
+		(stroke
+			(width 0.05)
+			(type default)
+		)
+		(layer "Edge.Cuts")
+		(uuid "6019e6d4-3463-4a0e-beef-e6aa0a32bb6d")
+	)
+	(fp_circle
+		(center -27 -27)
+		(end -27 -30)
+		(stroke
+			(width 0.1)
+			(type default)
+		)
+		(fill no)
+		(layer "Margin")
+		(uuid "91e03700-e469-4b14-b6da-04ea85650405")
+	)
+	(fp_circle
+		(center -27 27)
+		(end -24 27)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(fill no)
+		(layer "Margin")
+		(uuid "675ed323-c67c-427a-8a09-0a9e0a3ca82d")
+	)
+	(fp_circle
+		(center 22 -27)
+		(end 25 -27)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(fill no)
+		(layer "Margin")
+		(uuid "2dbce5b3-a83b-441f-aeb8-15a694d0f613")
+	)
+	(fp_circle
+		(center 22 27)
+		(end 25 27)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(fill no)
+		(layer "Margin")
+		(uuid "a7e4ac6b-e198-485a-8f8f-5929da759bc4")
+	)
+	(fp_text user "${REFERENCE}"
+		(at 0 2.5 0)
+		(unlocked yes)
+		(layer "F.Fab")
+		(uuid "92c65cd8-322a-41b1-af28-bfc25ae8124f")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(pad "" np_thru_hole circle
+		(at -27 -27 90)
+		(size 3.2 3.2)
+		(drill 3.2)
+		(layers "*.Cu" "*.Mask")
+		(uuid "4038170b-1c72-42d9-8946-38b5d60149f1")
+	)
+	(pad "" np_thru_hole circle
+		(at -27 27 90)
+		(size 3.2 3.2)
+		(drill 3.2)
+		(layers "*.Cu" "*.Mask")
+		(uuid "5b9bd2b6-7e99-4a8f-99dd-b08b3ad4c06b")
+	)
+	(pad "" np_thru_hole circle
+		(at 22 -27 90)
+		(size 3.2 3.2)
+		(drill 3.2)
+		(layers "*.Cu" "*.Mask")
+		(uuid "cfdc615e-3757-4b24-9902-d9371d2fc2d5")
+	)
+	(pad "" np_thru_hole circle
+		(at 22 27 90)
+		(size 3.2 3.2)
+		(drill 3.2)
+		(layers "*.Cu" "*.Mask")
+		(uuid "84269c69-2740-4aaa-ace7-29a4166a50bd")
+	)
+	(embedded_fonts no)
+)

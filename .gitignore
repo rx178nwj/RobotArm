@@ -1,2 +1,19 @@
 .claude/
 */.arduino-build/
+
+# Node/build artifacts
+node_modules/
+dist/
+build/
+*.pio/
+
+# Local toolchain symlinks
+multi_i2c_bridge/firmware/pico-win-toolchain
+
+# Editor/history
+.history/
+*.lck
+~*.kicad_sch
+~*.kicad_pcb
+~*.kicad_pro
+*-backups/
