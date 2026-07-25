@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <EEPROM.h>
 #include <Wire.h>
 
 #include <atomic>
@@ -53,6 +54,72 @@ constexpr uint8_t kDsMuxResetN = 2;
 constexpr size_t kConsoleLineSize = 128;
 constexpr size_t kUpstreamLogDepth = 64;
 constexpr size_t kDiagPayloadMax = 8;
+constexpr uint32_t kIdentityMagic = 0x31444942u;  // "BID1"
+constexpr size_t kIdentityLength = 16;
+
+struct StoredIdentity {
+  uint32_t magic;
+  char id[kIdentityLength + 1];
+  uint8_t checksum;
+};
+
+char gBridgeIdentity[kIdentityLength + 1]{};
+
+uint8_t identityChecksum(const char *id) {
+  uint8_t checksum = 0xA5u;
+  for (size_t i = 0; i < kIdentityLength; ++i) {
+    checksum = static_cast<uint8_t>((checksum << 1u) | (checksum >> 7u));
+    checksum ^= static_cast<uint8_t>(id[i]);
+  }
+  return checksum;
+}
+
+bool validIdentity(const char *id) {
+  if (id == nullptr || strlen(id) != kIdentityLength) {
+    return false;
+  }
+  for (size_t i = 0; i < kIdentityLength; ++i) {
+    if (!isxdigit(static_cast<unsigned char>(id[i]))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void copyIdentity(char *destination, const char *source) {
+  for (size_t i = 0; i < kIdentityLength; ++i) {
+    destination[i] = static_cast<char>(toupper(static_cast<unsigned char>(source[i])));
+  }
+  destination[kIdentityLength] = '\0';
+}
+
+void loadBridgeIdentity() {
+  EEPROM.begin(sizeof(StoredIdentity));
+  StoredIdentity stored{};
+  EEPROM.get(0, stored);
+  if (stored.magic == kIdentityMagic && validIdentity(stored.id) &&
+      stored.checksum == identityChecksum(stored.id)) {
+    copyIdentity(gBridgeIdentity, stored.id);
+  } else {
+    copyIdentity(gBridgeIdentity, rp2040.getChipID());
+  }
+}
+
+bool saveBridgeIdentity(const char *id) {
+  if (!validIdentity(id)) {
+    return false;
+  }
+  StoredIdentity stored{};
+  stored.magic = kIdentityMagic;
+  copyIdentity(stored.id, id);
+  stored.checksum = identityChecksum(stored.id);
+  EEPROM.put(0, stored);
+  if (!EEPROM.commit()) {
+    return false;
+  }
+  copyIdentity(gBridgeIdentity, stored.id);
+  return true;
+}
 
 // レジスタマップ確定仕様: command_spec.md §3 (6ch/v1.0)
 constexpr uint8_t REG_WHO_AM_I = 0x00;
@@ -1308,6 +1375,7 @@ void serviceDiagResult() {
 void printHelp() {
   Serial.println("multi_i2c_bridge USB diagnostic commands:");
   Serial.println("  help                         show this help");
+  Serial.println("  identity [set <16hex>]       show/provision persistent board identity");
   Serial.println("  status                       bridge summary and decoded faults");
   Serial.println("  channels                     per-channel input/output and sensor values");
   Serial.println("  config                       active bridge configuration");
@@ -1343,6 +1411,18 @@ void executeConsoleCommand(char *line) {
 
   if (strcmp(argv[0], "help") == 0 || strcmp(argv[0], "?") == 0) {
     printHelp();
+  } else if (strcmp(argv[0], "identity") == 0) {
+    if (argc == 1u) {
+      Serial.printf("IDENTITY product=multi_i2c_bridge id=%s protocol=1\r\n", gBridgeIdentity);
+    } else if (argc == 3u && strcmp(argv[1], "set") == 0 && validIdentity(argv[2])) {
+      if (saveBridgeIdentity(argv[2])) {
+        Serial.printf("OK identity id=%s\r\n", gBridgeIdentity);
+      } else {
+        Serial.println("ERR identity persistence failed");
+      }
+    } else {
+      Serial.println("ERR usage: identity [set <16hex>]");
+    }
   } else if (strcmp(argv[0], "status") == 0) {
     printStatus();
   } else if (strcmp(argv[0], "channels") == 0) {
@@ -1519,6 +1599,7 @@ void serviceMonitor() {
 void setup() {
 #if MULTI_I2C_BRIDGE_USB_CONSOLE
   Serial.begin(115200);
+  loadBridgeIdentity();
 #endif
   initSharedState();
   initStatusLeds();

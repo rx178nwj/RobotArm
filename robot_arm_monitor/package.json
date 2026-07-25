@@ -1,0 +1,23 @@
+{
+  "name": "robot-arm-monitor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "RobotArm2 integrated monitor (Phase 1)",
+  "main": "dist/main/main.js",
+  "scripts": {
+    "build": "tsc && node scripts/copy-static.mjs && node scripts/verify-renderer.mjs",
+    "start": "npm run build && electron .",
+    "dev": "npm run build && electron .",
+    "test:phase2": "npm run build && electron test/phase2-smoke.cjs"
+  },
+  "dependencies": {
+    "@serialport/parser-readline": "^13.0.0",
+    "electron-store": "8.2.0",
+    "serialport": "^13.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "electron": "^43.2.0",
+    "typescript": "^5.8.3"
+  }
+}

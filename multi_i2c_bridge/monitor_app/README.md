@@ -8,5 +8,6 @@ npm.cmd install
 npm.cmd start
 ```
 
-The application discovers RP2040 serial ports, requires an explicit Connect action,
-and monitors each connected bridge independently.
+The application discovers RP2040 serial ports and requires an explicit Connect action
+for the first connection. After that, it identifies the bridge using the firmware
+`identity` command and automatically reconnects it even if the OS assigns a new port.

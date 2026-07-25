@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Robot Arm Monitor</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <div>
+      <p class="eyebrow">ROBOTARM2 · PHASE 1</p>
+      <h1>Bridge connection monitor</h1>
+      <p class="description">multi_i2c_bridge の検出、identity 検証、単発 status 確認</p>
+    </div>
+    <button id="refresh">ポートを再読込</button>
+  </header>
+
+  <main>
+    <section class="panel">
+      <div class="panel-title">
+        <h2>シリアルポート</h2>
+        <span id="port-count" class="badge">0</span>
+      </div>
+      <div id="ports" class="ports"><p class="empty">ポートを検索しています…</p></div>
+      <div class="manual">
+        <input id="manual-port" placeholder="COM3">
+        <button id="manual-connect">手動ポートへ接続</button>
+      </div>
+      <p id="message" class="message" aria-live="polite"></p>
+    </section>
+
+    <section class="panel device-panel">
+      <div class="panel-title">
+        <h2>接続中の基板</h2>
+        <span id="state" class="state disconnected">未接続</span>
+      </div>
+      <div id="devices" class="device-list"><p class="empty">接続中の基板はありません。</p></div>
+      <div id="identity" class="identity"><span>Board ID</span><strong>—</strong></div>
+      <div id="status" class="status-grid">
+        <div><span>Port</span><strong>—</strong></div>
+        <div><span>Protocol</span><strong>—</strong></div>
+        <div><span>Samples</span><strong>—</strong></div>
+        <div><span>Uptime</span><strong>—</strong></div>
+      </div>
+      <button id="disconnect" class="danger" disabled>切断</button>
+    </section>
+
+    <section class="panel mapping-panel">
+      <div class="panel-title">
+        <div>
+          <p class="eyebrow">PHASE 2</p>
+          <h2>軸マッピング設定</h2>
+        </div>
+        <button id="save-mapping">マッピングを保存</button>
+      </div>
+      <p class="mapping-help">論理軸は最大12軸です。割当はCOM番号ではなく基板固有IDで保存されます。</p>
+      <div id="board-labels" class="board-labels"></div>
+      <div class="mapping-table-wrap">
+        <table class="mapping-table">
+          <thead>
+            <tr>
+              <th>論理軸</th>
+              <th>表示名</th>
+              <th>Motor基板</th>
+              <th>軸</th>
+              <th>Bridge基板</th>
+              <th>CH</th>
+            </tr>
+          </thead>
+          <tbody id="mapping-rows"></tbody>
+        </table>
+      </div>
+      <p id="mapping-message" class="message" aria-live="polite"></p>
+    </section>
+
+    <section class="panel log-panel">
+      <div class="panel-title">
+        <h2>送受信ログ</h2>
+        <span class="legend"><i class="tx"></i>TX <i class="rx"></i>RX</span>
+      </div>
+      <div id="log" class="log"><p class="empty">接続するとログが表示されます。</p></div>
+    </section>
+  </main>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

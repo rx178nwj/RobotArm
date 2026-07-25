@@ -66,6 +66,7 @@ USB CDC (`115200 8N1`) にテキストコマンドと改行を送ると、通常
 | `channels` | 各ch(0-5)の接続、有効、通信OK、DIR設定/実出力、角度、度数、AGC、磁石状態、読取成功/失敗回数と最終時刻 |
 | `config` | 角度ソース、巡回周期、AGC間引き、AS5600 CONF、CH/DIR設定(6ch) |
 | `monitor 1000` / `monitor off` | 指定周期(ms)で `status` と `channels` を継続表示 / 停止 |
+| `identity` / `identity set <16hex>` | Monitorの自動再接続に使う永続基板IDを表示 / 製造時に設定 |
 | `master` / `master clear` | 上流マスターのI2C通信カウンター表示 / カウンターとログ消去 |
 | `log [件数]` / `log clear` | 上流マスターからの直近通信ログ表示（最大64件）/ 消去 |
 | `stats clear` | 下流バスと各chの診断カウンターを消去 |

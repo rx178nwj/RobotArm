@@ -19,26 +19,49 @@ export class DeviceSession extends EventEmitter {
   private status = emptyStatus();
   private snapshot: DeviceSnapshot;
 
-  constructor(private info: PortInfo) {
+  constructor(private info: PortInfo, id: string) {
     super();
-    this.id = info.serialNumber || info.path;
-    this.snapshot = { id: this.id, path: info.path, serialNumber: info.serialNumber || "unknown", state: "disconnected", lastUpdate: 0, channels: [], rawLines: [] };
+    this.id = id;
+    this.snapshot = { id: this.id, path: info.path, serialNumber: id, state: "disconnected", lastUpdate: 0, channels: [], rawLines: [] };
   }
 
-  async connect(periodMs: number): Promise<void> {
+  async connect(periodMs: number, info = this.info): Promise<void> {
+    this.info = info;
     this.periodMs = periodMs;
+    this.snapshot.path = info.path;
+    delete this.snapshot.error;
     this.snapshot.state = "connecting";
     this.emitUpdate();
-    this.port = new SerialPort({ path: this.info.path, baudRate: 115200, autoOpen: false });
-    this.port.on("error", error => this.fail(error));
-    this.port.on("close", () => { this.snapshot.state = "disconnected"; this.stopTimers(); this.emitUpdate(); });
-    await new Promise<void>((resolve, reject) => this.port!.open(error => error ? reject(error) : resolve()));
-    await new Promise<void>(resolve => this.port!.set({ dtr: true, rts: true }, () => resolve()));
-    const parser = this.port.pipe(new ReadlineParser({ delimiter: "\n" }));
+    const port = new SerialPort({ path: info.path, baudRate: 115200, autoOpen: false });
+    this.port = port;
+    port.on("error", error => { if (this.port === port) this.fail(error); });
+    port.on("close", () => {
+      if (this.port !== port) return;
+      this.port = undefined;
+      this.snapshot.state = "disconnected";
+      this.stopTimers();
+      this.emitUpdate();
+    });
+    try {
+      await new Promise<void>((resolve, reject) => port.open(error => error ? reject(error) : resolve()));
+      await new Promise<void>((resolve, reject) => port.set({ dtr: true, rts: true }, error => error ? reject(error) : resolve()));
+    } catch (error) {
+      if (this.port === port) {
+        this.port = undefined;
+        this.snapshot.state = "disconnected";
+        this.snapshot.error = error instanceof Error ? error.message : String(error);
+        this.emitUpdate();
+      }
+      throw error;
+    }
+    const parser = port.pipe(new ReadlineParser({ delimiter: "\n" }));
     parser.on("data", (line: string) => this.onLine(line.replace(/\r$/, "")));
     this.write("status");
-    setTimeout(() => this.startMonitor(), 250);
+    setTimeout(() => { if (this.port === port && port.isOpen) this.startMonitor(); }, 250);
   }
+
+  get path(): string { return this.snapshot.path; }
+  get reconnectPending(): boolean { return !this.port?.isOpen && this.snapshot.state === "disconnected"; }
 
   startMonitor(periodMs = this.periodMs): void {
     this.periodMs = Math.max(100, Math.min(60000, periodMs));
@@ -101,6 +124,7 @@ export class DeviceSession extends EventEmitter {
       ? `${error.message}. Add the user to the dialout group.` : error.message;
     this.stopTimers();
     this.emitUpdate();
+    if (this.port?.isOpen) this.port.close();
   }
 
   private stopTimers(): void {

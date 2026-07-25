@@ -1,4 +1,4 @@
-import type { BridgeStatus, ChannelData, MasterStats } from "../shared/types";
+import type { BridgeStatus, ChannelData, MasterStats } from "../../shared/types";
 
 export interface BridgeIdentity {
   product: string;
@@ -20,7 +20,11 @@ const num = (value: string | undefined): number => value ? Number(value) : 0;
 export function parseIdentity(line: string): BridgeIdentity | null {
   if (!line.startsWith("IDENTITY ")) return null;
   const f = fields(line);
-  if (f.product !== "multi_i2c_bridge" || !/^[0-9a-f]{16}$/i.test(f.id)) return null;
+  if (
+    f.product !== "multi_i2c_bridge"
+    || !/^[0-9a-f]{16}$/i.test(f.id)
+    || f.protocol !== "1"
+  ) return null;
   return { product: f.product, id: f.id.toUpperCase(), protocol: num(f.protocol) };
 }
 
