@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain } from "electron";
 import path from "node:path";
-import type { MappingSettings, PortInfo } from "../shared/types";
+import type { BridgeMaintenanceRequest, MappingSettings, PortInfo } from "../shared/types";
 import { AxisMappingStore } from "./axis-mapping";
 import { DeviceManager } from "./device-manager";
 
@@ -12,6 +12,11 @@ function registerIpc(): void {
   ipcMain.handle("ports:list", () => manager.listPorts());
   ipcMain.handle("device:connect", (_event, info: PortInfo) => manager.connect(info, 100));
   ipcMain.handle("device:disconnect", (_event, boardId: string) => manager.disconnect(boardId));
+  ipcMain.handle(
+    "bridge:maintenance",
+    (_event, boardId: string, request: BridgeMaintenanceRequest) =>
+      manager.executeBridgeMaintenance(boardId, request)
+  );
   ipcMain.handle("mapping:get", () => mappingStore.get());
   ipcMain.handle("mapping:set", (_event, settings: MappingSettings) => mappingStore.set(settings));
 }

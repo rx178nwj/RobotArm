@@ -1,7 +1,8 @@
 # Robot Arm Monitor
 
-RobotArm2 統合モニタの Phase 2 実装です。複数の`multi_i2c_bridge`を
-USB-CDCで個別に接続し、基板固有IDを使った最大12軸のマッピングを保存できます。
+RobotArm2 統合モニタの Phase 3 実装です。複数の`multi_i2c_bridge`を
+USB-CDCで個別に接続し、基板固有IDを使った最大12軸のマッピング保存と
+bridge保守コマンドの実行ができます。
 
 ## 起動
 
@@ -35,15 +36,32 @@ IDENTITY product=multi_i2c_bridge id=<16桁の16進ID> protocol=1
 USB接続位置やCOM番号が変わっても引き継がれます。同じbridgeの同じCHを複数の
 論理軸へ割り当てることはできません。
 
-## Phase 2 の範囲
+## Bridge保守操作
+
+接続中の基板を選択し、「Bridge 保守コマンド」から次の操作を実行できます。
+
+- `fault clear`
+- `rescan`
+- `ch <0..5> enable|disable`
+- `ch <0..5> dir <0|1>`
+- `mux reset`
+- `reboot`
+
+任意のコマンド文字列は送信できません。`ch dir`、`mux reset`、`reboot` は実行前に
+確認ダイアログを表示します。コマンド送信後はbridgeからの`OK`または`ERR`を待ち、
+結果を画面と送受信ログへ表示します。
+
+## Phase 3 の範囲
 
 - Electron + TypeScriptによる開発実行
 - `DeviceAdapter`共通インタフェース
 - 複数`multi_i2c_bridge`の個別接続・切断・表示切替
 - `identity`検証、単発`status`取得、基板別送受信ログ
 - 最大12軸の動的マッピングと基板ラベルの永続化
+- bridge保守コマンドの型付きIPC、応答確認、基板別操作UI
+- チャンネル別enable/disable・DIR設定と危険操作の確認ダイアログ
 
-統合ダッシュボード、常時ポーリング、グラフ、bridge保守コマンドGUI、
+パラメータ設定、CSVログ記録、統合ダッシュボード、常時ポーリング、グラフ、
 SteppingMotorDriver/BLE、制御アプリIPCは未実装です。
 
 ## 接続できない場合

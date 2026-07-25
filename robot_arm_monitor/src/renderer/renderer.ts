@@ -1,4 +1,7 @@
 type AxisMappingEntry = import("../shared/types").AxisMappingEntry;
+type BridgeMaintenanceRequest = import("../shared/types").BridgeMaintenanceRequest;
+type BridgeMaintenanceResult = import("../shared/types").BridgeMaintenanceResult;
+type BridgeSnapshot = import("../shared/types").BridgeSnapshot;
 type ConnectResult = import("../shared/types").ConnectResult;
 type DeviceSnapshot = import("../shared/types").DeviceSnapshot;
 type MappingSettings = import("../shared/types").MappingSettings;
@@ -9,6 +12,10 @@ interface Window {
     listPorts(): Promise<PortInfo[]>;
     connect(port: PortInfo): Promise<ConnectResult>;
     disconnect(boardId: string): Promise<void>;
+    executeBridgeMaintenance(
+      boardId: string,
+      request: BridgeMaintenanceRequest
+    ): Promise<BridgeMaintenanceResult>;
     getMappingSettings(): Promise<MappingSettings>;
     saveMappingSettings(settings: MappingSettings): Promise<MappingSettings>;
     onDeviceUpdate(callback: (snapshot: DeviceSnapshot) => void): () => void;
@@ -20,6 +27,7 @@ let ports = new Map<string, PortInfo>();
 let selectedBoardId: string | undefined;
 let displayedSnapshot: DeviceSnapshot | undefined;
 let mappingSettings: MappingSettings = { axisMapping: [], boardLabels: {} };
+let maintenanceBusy = false;
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 const esc = (value: unknown): string => String(value ?? "").replace(
@@ -35,6 +43,12 @@ function setMessage(text: string, error = false): void {
 
 function setMappingMessage(text: string, error = false): void {
   const element = $("mapping-message");
+  element.textContent = text;
+  element.className = error ? "message error" : "message";
+}
+
+function setMaintenanceMessage(text: string, error = false): void {
+  const element = $("maintenance-message");
   element.textContent = text;
   element.className = error ? "message error" : "message";
 }
@@ -130,6 +144,7 @@ function renderDevices(): void {
       displayedSnapshot = selectedBoardId ? devices.get(selectedBoardId) : undefined;
       renderDevices();
       renderSelectedDevice();
+      renderMaintenance();
     };
   });
 }
@@ -144,6 +159,7 @@ function renderSelectedDevice(): void {
     $("status").innerHTML = emptyStatusHtml();
     $("log").innerHTML = `<p class="empty">接続するとログが表示されます。</p>`;
     $<HTMLButtonElement>("disconnect").disabled = true;
+    renderMaintenance();
     return;
   }
 
@@ -168,6 +184,91 @@ function renderSelectedDevice(): void {
     </div>`).join("") : `<p class="empty">ログはまだありません。</p>`;
   $("log").scrollTop = $("log").scrollHeight;
   if (snapshot.error) setMessage(snapshot.error, true);
+  renderMaintenance();
+}
+
+function renderMaintenance(): void {
+  const snapshot = displayedSnapshot?.kind === "multi_i2c_bridge"
+    && devices.has(displayedSnapshot.boardId)
+    ? displayedSnapshot as BridgeSnapshot
+    : undefined;
+  $("maintenance-target").textContent = snapshot
+    ? mappingSettings.boardLabels[snapshot.boardId] || snapshot.boardId
+    : "基板未選択";
+  document.querySelectorAll<HTMLButtonElement>("[data-maintenance]").forEach(button => {
+    button.disabled = !snapshot || maintenanceBusy;
+  });
+  const channels = new Map(snapshot?.channels.map(channel => [channel.channel, channel]) ?? []);
+  $("maintenance-channels").innerHTML = Array.from({ length: 6 }, (_, channel) => {
+    const data = channels.get(channel);
+    const enabled = data?.enable;
+    const direction = data?.dirConfig;
+    return `
+      <div class="maintenance-channel">
+        <strong>CH ${channel}</strong>
+        <span>${data ? `${data.present ? "PRESENT" : "ABSENT"} · ${data.ok ? "OK" : "NOT OK"}` : "状態未取得"}</span>
+        <div class="channel-actions">
+          <button data-channel-enable="${channel}" class="${enabled === true ? "active" : ""}" ${!snapshot || maintenanceBusy ? "disabled" : ""}>Enable</button>
+          <button data-channel-disable="${channel}" class="${enabled === false ? "active" : ""}" ${!snapshot || maintenanceBusy ? "disabled" : ""}>Disable</button>
+          <button data-channel-dir="${channel}" data-direction="0" class="${direction === false ? "active" : ""}" ${!snapshot || maintenanceBusy ? "disabled" : ""}>DIR 0</button>
+          <button data-channel-dir="${channel}" data-direction="1" class="${direction === true ? "active" : ""}" ${!snapshot || maintenanceBusy ? "disabled" : ""}>DIR 1</button>
+        </div>
+      </div>`;
+  }).join("");
+  document.querySelectorAll<HTMLButtonElement>("[data-channel-enable]").forEach(button => {
+    button.onclick = () => void executeMaintenance({
+      action: "channel_enable",
+      channel: Number(button.dataset.channelEnable)
+    });
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-channel-disable]").forEach(button => {
+    button.onclick = () => void executeMaintenance({
+      action: "channel_disable",
+      channel: Number(button.dataset.channelDisable)
+    });
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-channel-dir]").forEach(button => {
+    button.onclick = () => void executeMaintenance({
+      action: "channel_direction",
+      channel: Number(button.dataset.channelDir),
+      direction: Number(button.dataset.direction) as 0 | 1
+    });
+  });
+}
+
+async function executeMaintenance(request: BridgeMaintenanceRequest): Promise<void> {
+  const snapshot = displayedSnapshot;
+  if (!snapshot || snapshot.kind !== "multi_i2c_bridge" || !devices.has(snapshot.boardId)) {
+    setMaintenanceMessage("接続中のbridgeを選択してください。", true);
+    return;
+  }
+  const confirmation = maintenanceConfirmation(request);
+  if (confirmation && !window.confirm(confirmation)) return;
+  maintenanceBusy = true;
+  setMaintenanceMessage("コマンド応答を待っています…");
+  renderMaintenance();
+  try {
+    const result = await window.robotArmApi.executeBridgeMaintenance(snapshot.boardId, request);
+    setMaintenanceMessage(`${result.command} → ${result.response}`);
+  } catch (error) {
+    setMaintenanceMessage(`保守コマンド失敗: ${errorText(error)}`, true);
+  } finally {
+    maintenanceBusy = false;
+    renderMaintenance();
+  }
+}
+
+function maintenanceConfirmation(request: BridgeMaintenanceRequest): string | undefined {
+  switch (request.action) {
+    case "channel_direction":
+      return `CH ${request.channel} のDIRを ${request.direction} に変更します。角度出力が不連続になる可能性があります。実行しますか？`;
+    case "mux_reset":
+      return "TCA9548Aをハードウェアリセットし、下流センサを再初期化します。実行しますか？";
+    case "reboot":
+      return "選択中のbridgeを再起動します。USB接続が切断されます。実行しますか？";
+    default:
+      return undefined;
+  }
 }
 
 function emptyStatusHtml(): string {
@@ -290,6 +391,11 @@ async function init(): Promise<void> {
   $("refresh").onclick = () => void refreshPorts();
   $("manual-connect").onclick = () => void connect($<HTMLInputElement>("manual-port").value.trim());
   $("save-mapping").onclick = () => void saveMapping();
+  document.querySelectorAll<HTMLButtonElement>("[data-maintenance]").forEach(button => {
+    button.onclick = () => void executeMaintenance({
+      action: button.dataset.maintenance as BridgeMaintenanceRequest["action"]
+    });
+  });
   $("disconnect").onclick = async () => {
     if (!selectedBoardId) return;
     const boardId = selectedBoardId;
@@ -300,6 +406,7 @@ async function init(): Promise<void> {
     setMessage("切断しました。");
     renderDevices();
     renderSelectedDevice();
+    renderMaintenance();
     renderMapping();
     await refreshPorts();
   };
@@ -311,6 +418,7 @@ async function init(): Promise<void> {
   }
   renderDevices();
   renderSelectedDevice();
+  renderMaintenance();
   renderMapping();
   await refreshPorts();
 }

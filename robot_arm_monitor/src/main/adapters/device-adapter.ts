@@ -15,6 +15,7 @@ export interface DeviceAdapter extends EventEmitter {
   connect(path: string, periodMs: number): Promise<void>;
   disconnect(): void;
   sendCommand(command: string): void;
+  executeCommand(command: string): Promise<string>;
   on(event: "update", listener: (snapshot: DeviceSnapshot) => void): this;
 }
 

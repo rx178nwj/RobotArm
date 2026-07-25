@@ -94,6 +94,27 @@ export interface ConnectResult {
   boardId: string;
 }
 
+export type BridgeMaintenanceAction =
+  | "fault_clear"
+  | "rescan"
+  | "channel_enable"
+  | "channel_disable"
+  | "channel_direction"
+  | "mux_reset"
+  | "reboot";
+
+export interface BridgeMaintenanceRequest {
+  action: BridgeMaintenanceAction;
+  channel?: number;
+  direction?: 0 | 1;
+}
+
+export interface BridgeMaintenanceResult {
+  boardId: string;
+  command: string;
+  response: string;
+}
+
 export interface AxisMappingEntry {
   axisId: number;
   label: string;

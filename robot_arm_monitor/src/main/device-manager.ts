@@ -1,5 +1,12 @@
 import { SerialPort } from "serialport";
-import type { ConnectResult, DeviceSnapshot, PortInfo, RawLogEntry } from "../shared/types";
+import type {
+  BridgeMaintenanceRequest,
+  BridgeMaintenanceResult,
+  ConnectResult,
+  DeviceSnapshot,
+  PortInfo,
+  RawLogEntry
+} from "../shared/types";
 import { MultiI2cBridgeAdapter } from "./adapters/multi-i2c-bridge-adapter";
 import type { DeviceAdapter } from "./adapters/device-adapter";
 import { VID_HINT } from "./adapters/device-adapter";
@@ -91,10 +98,61 @@ export class DeviceManager {
     }
   }
 
+  async executeBridgeMaintenance(
+    boardId: string,
+    request: BridgeMaintenanceRequest
+  ): Promise<BridgeMaintenanceResult> {
+    const adapter = this.adapters.get(boardId);
+    if (!adapter) throw new Error(`Board ${boardId} is not connected`);
+    if (adapter.kind !== "multi_i2c_bridge") throw new Error("Maintenance commands require a bridge board");
+    const command = bridgeMaintenanceCommand(request);
+    const response = await adapter.executeCommand(command);
+    if (request.action !== "reboot") {
+      setTimeout(() => {
+        try {
+          adapter.sendCommand("status");
+          adapter.sendCommand("channels");
+        } catch {
+          // Disconnects after an acknowledged command are reported by the adapter.
+        }
+      }, 100);
+    }
+    return { boardId, command, response };
+  }
+
   disconnectAll(): void {
     for (const adapter of this.adapters.values()) adapter.disconnect();
     this.adapters.clear();
     this.boardByPath.clear();
     this.connectingPaths.clear();
   }
+}
+
+export function bridgeMaintenanceCommand(request: BridgeMaintenanceRequest): string {
+  if (!request || typeof request !== "object") throw new Error("Invalid maintenance request");
+  switch (request.action) {
+    case "fault_clear": return "fault clear";
+    case "rescan": return "rescan";
+    case "mux_reset": return "mux reset";
+    case "reboot": return "reboot";
+    case "channel_enable":
+      return `ch ${validChannel(request.channel)} enable`;
+    case "channel_disable":
+      return `ch ${validChannel(request.channel)} disable`;
+    case "channel_direction": {
+      const channel = validChannel(request.channel);
+      if (request.direction !== 0 && request.direction !== 1) throw new Error("Direction must be 0 or 1");
+      return `ch ${channel} dir ${request.direction}`;
+    }
+    default:
+      throw new Error("Unsupported maintenance command");
+  }
+}
+
+function validChannel(value: unknown): number {
+  const channel = Number(value);
+  if (!Number.isInteger(channel) || channel < 0 || channel > 5) {
+    throw new Error("Bridge channel must be an integer from 0 to 5");
+  }
+  return channel;
 }

@@ -7,7 +7,7 @@
 
 * { box-sizing: border-box; }
 body { margin: 0; min-height: 100vh; background: radial-gradient(circle at 75% 0, #16243a 0, #0b111b 38%); }
-button, input { font: inherit; }
+button, input, select { font: inherit; }
 button {
   border: 1px solid #34445d; border-radius: 8px; color: #e8edf5; background: #1b293d;
   padding: 9px 14px; cursor: pointer;
@@ -58,7 +58,21 @@ input { flex: 1; min-width: 0; color: #e8edf5; background: #0c1522; border: 1px 
 .device-button.selected { border-color: #4ecbd3; background: #15303b; }
 .device-button strong, .device-button small { display: block; overflow: hidden; text-overflow: ellipsis; }
 .device-button small { margin-top: 3px; }
-.mapping-panel, .log-panel { grid-column: 1 / -1; }
+.maintenance-panel, .mapping-panel, .log-panel { grid-column: 1 / -1; }
+.maintenance-help { margin: -5px 0 14px; color: #8796ac; font-size: 13px; }
+.maintenance-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 13px; }
+.maintenance-actions .caution { border-color: #755d2d; color: #f1cb72; background: #292316; }
+.maintenance-actions .danger-inline { border-color: #713442; color: #ff9caf; background: #2b1820; }
+.maintenance-channels { display: grid; grid-template-columns: repeat(3, minmax(220px, 1fr)); gap: 8px; }
+.maintenance-channel {
+  display: grid; grid-template-columns: auto 1fr; gap: 8px 12px; align-items: center;
+  padding: 10px; border: 1px solid #25344b; border-radius: 8px; background: #101b2a;
+}
+.maintenance-channel > strong { color: #6fd7dc; }
+.maintenance-channel > span { color: #8796ac; font-size: 11px; text-align: right; }
+.maintenance-channel .channel-actions { grid-column: 1 / -1; display: flex; gap: 6px; }
+.maintenance-channel button { flex: 1; padding: 7px; font-size: 12px; }
+.maintenance-channel button.active { border-color: #49b9c3; background: #15303b; }
 .mapping-help { margin: -5px 0 14px; color: #8796ac; font-size: 13px; }
 .board-labels { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 8px; margin-bottom: 14px; }
 .board-label { display: grid; grid-template-columns: minmax(120px, .8fr) 1.2fr; align-items: center; gap: 8px; padding: 9px; border-radius: 8px; background: #101b2a; }
@@ -93,5 +107,6 @@ input { flex: 1; min-width: 0; color: #e8edf5; background: #0c1522; border: 1px 
 @media (max-width: 850px) {
   header { padding: 24px; }
   main { grid-template-columns: 1fr; padding: 18px 24px; }
-  .mapping-panel, .log-panel { grid-column: auto; }
+  .maintenance-panel, .mapping-panel, .log-panel { grid-column: auto; }
+  .maintenance-channels { grid-template-columns: 1fr; }
 }

@@ -19,6 +19,11 @@ export class MultiI2cBridgeAdapter extends EventEmitter implements DeviceAdapter
   private monitorResponseTimer?: NodeJS.Timeout;
   private masterTimer?: NodeJS.Timeout;
   private initialStatus?: { resolve: () => void; reject: (error: Error) => void };
+  private commandResponse?: {
+    resolve: (response: string) => void;
+    reject: (error: Error) => void;
+    timer: NodeJS.Timeout;
+  };
   private periodMs = 100;
   private monitorEnabled = false;
   private status = emptyStatus();
@@ -46,7 +51,9 @@ export class MultiI2cBridgeAdapter extends EventEmitter implements DeviceAdapter
     port.on("error", error => { if (this.port === port) this.fail(error); });
     port.on("close", () => {
       if (this.port !== port) return;
-      this.rejectInitialStatus(new Error(`serial port ${path} closed before status response`));
+      const error = new Error(`serial port ${path} closed`);
+      this.rejectInitialStatus(error);
+      this.rejectCommand(error);
       this.port = undefined;
       this.stopTimers();
       this.snapshot.state = "disconnected";
@@ -60,6 +67,7 @@ export class MultiI2cBridgeAdapter extends EventEmitter implements DeviceAdapter
       const parser = port.pipe(new ReadlineParser({ delimiter: "\n" }));
       parser.on("data", (line: string) => this.onLine(line.replace(/\r$/, "")));
       await this.requestInitialStatus();
+      this.sendCommand("channels");
     } catch (error) {
       if (this.port === port) this.port = undefined;
       this.stopTimers();
@@ -77,6 +85,7 @@ export class MultiI2cBridgeAdapter extends EventEmitter implements DeviceAdapter
 
   disconnect(): void {
     this.rejectInitialStatus(new Error("Disconnected by user"));
+    this.rejectCommand(new Error("Disconnected by user"));
     this.stopTimers();
     const port = this.port;
     this.port = undefined;
@@ -121,9 +130,35 @@ export class MultiI2cBridgeAdapter extends EventEmitter implements DeviceAdapter
     this.emitUpdate();
   }
 
+  executeCommand(command: string): Promise<string> {
+    if (this.commandResponse) return Promise.reject(new Error("Another bridge command is still pending"));
+    return new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (!this.commandResponse) return;
+        this.commandResponse = undefined;
+        reject(new Error(`Command response timeout: ${command}`));
+      }, 2000);
+      this.commandResponse = { resolve, reject, timer };
+      try {
+        this.sendCommand(command);
+      } catch (error) {
+        clearTimeout(timer);
+        this.commandResponse = undefined;
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+  }
+
   private onLine(line: string): void {
     if (!line) return;
     this.log("rx", line);
+    if (this.commandResponse && (line.startsWith("OK") || line.startsWith("ERR"))) {
+      const pending = this.commandResponse;
+      this.commandResponse = undefined;
+      clearTimeout(pending.timer);
+      if (line.startsWith("ERR")) pending.reject(new Error(line));
+      else pending.resolve(line);
+    }
     const status = parseStatus(line);
     if (status) {
       Object.assign(this.status, status);
@@ -164,6 +199,7 @@ export class MultiI2cBridgeAdapter extends EventEmitter implements DeviceAdapter
     this.snapshot.error = error.message;
     this.log("system", `Serial error: ${error.message}`);
     this.rejectInitialStatus(error);
+    this.rejectCommand(error);
     this.stopTimers();
     this.emitUpdate();
     if (this.port?.isOpen) this.port.close();
@@ -210,6 +246,14 @@ export class MultiI2cBridgeAdapter extends EventEmitter implements DeviceAdapter
     if (this.responseTimer) clearTimeout(this.responseTimer);
     this.responseTimer = undefined;
     pending?.reject(error);
+  }
+
+  private rejectCommand(error: Error): void {
+    const pending = this.commandResponse;
+    this.commandResponse = undefined;
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    pending.reject(error);
   }
 
   private armMonitorTimeout(): void {

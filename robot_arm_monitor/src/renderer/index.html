@@ -9,9 +9,9 @@
 <body>
   <header>
     <div>
-      <p class="eyebrow">ROBOTARM2 · PHASE 1</p>
+      <p class="eyebrow">ROBOTARM2 · PHASE 3</p>
       <h1>Bridge connection monitor</h1>
-      <p class="description">multi_i2c_bridge の検出、identity 検証、単発 status 確認</p>
+      <p class="description">multi_i2c_bridge の接続、軸マッピング、保守操作</p>
     </div>
     <button id="refresh">ポートを再読込</button>
   </header>
@@ -44,6 +44,27 @@
         <div><span>Uptime</span><strong>—</strong></div>
       </div>
       <button id="disconnect" class="danger" disabled>切断</button>
+    </section>
+
+    <section class="panel maintenance-panel">
+      <div class="panel-title">
+        <div>
+          <p class="eyebrow">PHASE 3</p>
+          <h2>Bridge 保守コマンド</h2>
+        </div>
+        <span id="maintenance-target" class="badge">基板未選択</span>
+      </div>
+      <p class="maintenance-help">
+        選択中のbridgeだけを操作します。ギア角度モニタの保守操作であり、モーター制御や安全機構には影響しません。
+      </p>
+      <div class="maintenance-actions">
+        <button data-maintenance="fault_clear">Fault clear</button>
+        <button data-maintenance="rescan">Rescan</button>
+        <button data-maintenance="mux_reset" class="caution">MUX reset</button>
+        <button data-maintenance="reboot" class="danger-inline">Reboot</button>
+      </div>
+      <div id="maintenance-channels" class="maintenance-channels"></div>
+      <p id="maintenance-message" class="message" aria-live="polite"></p>
     </section>
 
     <section class="panel mapping-panel">
