@@ -28,7 +28,7 @@ RobotArm2 は、複数の**SteppingMotorDriver基板**（モーション制御�
 |-------------|------|------------------|----------|
 | SteppingMotorDriverファームウェア | ESP32-S3、3軸モーション制御 | [SteppingMotorDriver/firmware/REQUIREMENTS.md](../SteppingMotorDriver/firmware/REQUIREMENTS.md) | Phase1〜5実装済み（[CLAUDE.md](../SteppingMotorDriver/CLAUDE.md)） |
 | SteppingMotorDriver ギア角度モニタ機能 | multi_i2c_bridge経由のギア出力角度中継 | [GEAR_ANGLE_MONITOR_REQUIREMENTS.md](../SteppingMotorDriver/firmware/GEAR_ANGLE_MONITOR_REQUIREMENTS.md) | Phase6案、未着手 |
-| SteppingMotorDriver BLEテレメトリサービス | モニタアプリ向け読み取り専用テレメトリ（§4） | 未作成（本書§6 #1） | 未着手・未設計 |
+| SteppingMotorDriver BLE・WiFi通信 | モニタアプリ向け読み取り専用テレメトリ（§4） | [BLE_WIFI_REQUIREMENTS.md](../SteppingMotorDriver/firmware/BLE_WIFI_REQUIREMENTS.md) | 要件定義済み（Phase1〜5未着手） |
 | SteppingMotorDriver monitor_app | 単体デバッグ用Electronアプリ（USB-CDC） | [SteppingMotorDriver/monitor_app/REQUIREMENTS.md](../SteppingMotorDriver/monitor_app/REQUIREMENTS.md) | Phase3まで実装済み |
 | multi_i2c_bridgeファームウェア・回路 | RP2040、AS5600×6ch集約ブリッジ | [multi_i2c_bridge/docs/design_spec.md](../multi_i2c_bridge/docs/design_spec.md)、[command_spec.md](../multi_i2c_bridge/docs/command_spec.md) | 6ch版実装済み |
 | multi_i2c_bridge USBシリアル診断IF | 監視・保守・強制制御コマンド | [multi_i2c_bridge/docs/usb_serial_spec.md](../multi_i2c_bridge/docs/usb_serial_spec.md) | 実装済み |
@@ -93,10 +93,10 @@ SteppingMotorDriverへは、モニタアプリ・制御アプリの2プロセス
 
 | # | 項目 | 優先度 | 影響先 |
 |---|------|--------|--------|
-| 1 | SteppingMotorDriverファームウェアへのBLEテレメトリサービス未実装（GATTサービス・キャラクタリスティック設計、送信形式未定。現行ファームウェアはUSB Serial/JTAGのみ、[CLAUDE.md](../SteppingMotorDriver/CLAUDE.md)） | High | robot_arm_monitor（Phase6ブロッカー） |
+| ~~1~~ | ~~SteppingMotorDriverファームウェアへのBLEテレメトリサービス未実装~~（解決済み：[BLE_WIFI_REQUIREMENTS.md](../SteppingMotorDriver/firmware/BLE_WIFI_REQUIREMENTS.md) §4 でGATTサービス・キャラクタリスティック（Device Info/Axis Status/Power/Fault Info/Gear Angle、既存USBコマンドのJSON構造を転用）を確定。実装は未着手（同書§10 Phase1〜2）） | ~~High~~ | robot_arm_monitor（Phase6ブロッカー、要件定義完了により着手可能） |
 | 2 | 制御アプリ本体・モニタアプリとのIPC中継プロトコル未設計（コマンド形式・認証要否・接続確認方法） | High | robot_arm_monitor（Phase7ブロッカー） |
-| 3 | Bluetoothデバイス検出・ペアリングのUX未検討（USB VID一次分類に相当する仕組みがBluetoothには未検討） | Medium | robot_arm_monitor |
-| 4 | WiFi追加実装の時期・用途（モニタ向け/制御向け）未定 | Low（将来） | 全体 |
+| ~~3~~ | ~~Bluetoothデバイス検出・ペアリングのUX未検討~~（解決済み：[BLE_WIFI_REQUIREMENTS.md](../SteppingMotorDriver/firmware/BLE_WIFI_REQUIREMENTS.md) §4.2/§4.4 でAdvertising名`SMD-<board_id>`によるUSB VID一次分類相当の識別、LE Secure Connections + Just Works + ボンディングによるペアリング方式を確定） | ~~Medium~~ | robot_arm_monitor |
+| ~~4~~ | ~~WiFi追加実装の時期・用途未定~~（解決済み：[BLE_WIFI_REQUIREMENTS.md](../SteppingMotorDriver/firmware/BLE_WIFI_REQUIREMENTS.md) §5 で用途を「BLEの代替・追加の高帯域テレメトリ経路」に確定。SSID/パスワードはUSB-CDC経由でプロビジョニング。実装は未着手（同書§10 Phase3〜4）） | ~~Low~~ | 全体 |
 | 5 | **残存安全リスク**：ESTOPが制御アプリへの中継経路のみを通るため、制御アプリが未起動・無応答の場合はモニタアプリからのESTOPも実行できない（§4で確定した仕様上の制約。無線への例外は設けない方針のため恒久的に残る） | High | robot_arm_monitor、制御アプリ、安全設計全体 |
 | 6 | 軸マッピングの上限12軸（4基板×3軸）が実際の将来要件と一致するか | Low | 全体 |
 
@@ -115,3 +115,4 @@ SteppingMotorDriverへは、モニタアプリ・制御アプリの2プロセス
 | 2026-07-25 | 基板構成を2+2から3+3（現行）・将来最大4+4へ更新。軸マッピングを固定J1〜J6から動的な論理軸リスト（最大12軸）へ一般化 |
 | 2026-07-25 | モニタアプリのモーション制御操作は制御アプリへのIPC中継方式に確定。ESTOPも同経路のみを通ることを確定し、残存安全リスクとして記録 |
 | 2026-07-25 | システム横断の要求仕様（本書）を新設し、[robot_arm_monitor/REQUIREMENTS.md](../robot_arm_monitor/REQUIREMENTS.md) §7 の内容を移管 |
+| 2026-07-25 | SteppingMotorDriverのBLE・WiFi通信要件を新設（[BLE_WIFI_REQUIREMENTS.md](../SteppingMotorDriver/firmware/BLE_WIFI_REQUIREMENTS.md)）。GATTサービス構成（既存USBコマンドのJSON構造を転用）、ペアリング方式（Just Works+ボンディング）、WiFi用途（BLE代替の高帯域テレメトリ、USB-CDC経由プロビジョニング）を確定し、§6 #1/#3/#4をクローズ |

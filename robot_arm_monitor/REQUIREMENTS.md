@@ -181,21 +181,13 @@ RobotArm2 の各関節は以下の2系統のマイコン基板で制御・監視
 - bridgeへの直接USB接続のポーリング周期は **100ms**（[usb_serial_spec.md §4.7](../multi_i2c_bridge/docs/usb_serial_spec.md)の`monitor <100..60000|off>`が受理する下限値）とする。中継値側（SteppingMotorDriver、10ms周期でI2C取得・都度公開）より粗いが、F-RAM-GEAR-03で静止中限定判定とすることでスキューの影響を無視できるため、これ以上の高速化は不要と判断する。
 - [multi_i2c_bridge/docs/monitor_app_spec.md §5.1](../multi_i2c_bridge/docs/monitor_app_spec.md)が示す既定1000msより短いが、プロトコル許容範囲内であり、bridge単体アプリの既定値とは独立して本アプリ側で100msに設定してよい。
 
-#### F-RAM-GEAR-04: bridge保守コマンド（読み取り中心、v0.1／GUI化時期確定）
+#### F-RAM-GEAR-04: bridge保守コマンド（読み取り中心、v0.1／実装済み）
 
-- v0.1では bridge の `rescan`/`fault clear`/`mux reset`/`ch enable|disable`/`ch dir`/`reboot`（[usb_serial_spec.md §5](../multi_i2c_bridge/docs/usb_serial_spec.md)）はGUIから発行せず、参照表示のみとする。
-- **GUI化の着手時期（確定）**：トレンドグラフ（F-RAM-GRAPH）の実装が完了し、実機とのデータ接続（監視系、読み取り専用）が確認できた後に着手する。保守コマンドはコマンドごとに「実装」と「対応GUI」を同時に構築し、1コマンド分のGUIが実機で動作確認できてから次のコマンドへ進める（一括実装・一括確認は行わない）。
+**方針改訂（2026-07-26）：** 当初はトレンドグラフ（F-RAM-GRAPH）実装完了・実機データ接続確認後に、コマンドごとに1つずつ実装・実機確認する方針だった。実際にはトレンドグラフ実装（Phase 9）に先行して、`rescan`/`fault clear`/`mux reset`/`ch enable|disable`/`ch dir`/`reboot`（[usb_serial_spec.md §5](../multi_i2c_bridge/docs/usb_serial_spec.md)）の6コマンド全てのGUIを一括実装した。段階導入によるリスク低減より実装効率を優先した判断であり、以後この方針を正とする。
 
-**着手順序の目安**（監視系が安定してから、保守系コマンドをリスクの低い順に1つずつ）：
-
-| 順序 | コマンド | 備考 |
-|------|---------|------|
-| 1 | `fault clear` | 読み取り専用に近く副作用が限定的 |
-| 2 | `rescan` | 下流再検出、実行中の巡回に影響するが復帰は自動 |
-| 3 | `ch enable`/`ch disable` | 個別ch制御、全ch無効化は拒否される安全策あり（[usb_serial_spec.md §5](../multi_i2c_bridge/docs/usb_serial_spec.md)） |
-| 4 | `ch dir` | 出力に不連続を生じるため確認ダイアログ必須（F-RAM-SAFETY） |
-| 5 | `mux reset` | ハードウェアリセットを伴う |
-| 6 | `reboot` | 最も影響が大きいため最後 |
+- 全6コマンドをGUIから発行可能（`executeBridgeMaintenance`、[device-manager.ts](../src/main/device-manager.ts)）。
+- 副作用が大きいコマンド（`ch dir`／`mux reset`／`reboot`）には実行前確認ダイアログを表示する（[renderer.ts](../src/renderer/renderer.ts) `maintenanceConfirmation`）。
+- **実機での個別動作確認は未実施**（§9 ロードマップ Phase 3 参照）。各コマンドの実機確認が完了するまでは、保守コマンドGUIを実運用（本番のロボットアーム保守作業）で使用しないこと。
 
 ### 4.6 トレンドグラフ（F-RAM-GRAPH、表示レイアウト確定）
 
@@ -287,7 +279,7 @@ RobotArm2 の各関節は以下の2系統のマイコン基板で制御・監視
 | ~~2~~ | ~~実機の bridge 台数~~（解決済み、後日更新：GPIO38/39単一マスタ制約によりSteppingMotorDriver 1枚:bridge 1台の1:1ペアリングは確定。台数自体は当初2+2としていたが、[design/IF_design.drawio](../design/IF_design.drawio)により**3+3（現行）・将来最大4+4**へ更新。各bridge CH0-2使用/CH3-5未使用は変わらず。§3.1） | ~~High~~ |
 | ~~3~~ | ~~中継値とbridge直接値の突合の許容差分デフォルト値~~（解決済み：静止中（IDLE）限定で判定、閾値1.0°暫定値を維持。動作中は判定除外（スキュー影響回避）。§4.5 F-RAM-GEAR-03） | ~~Medium~~ |
 | ~~4~~ | ~~グラフ描画ライブラリの選定~~（解決済み：uPlotを継続採用。1チャートあたりの系列数を絞る表示レイアウト（軸詳細=最大4系列/グループ、軸横断比較=最大6系列）を設計することで、既存アプリの実績をそのまま転用可能と判断。§4.6 F-RAM-GRAPH-01〜04） | ~~Medium~~ |
-| ~~5~~ | ~~bridge保守コマンド（F-RAM-GEAR-04）のGUI化時期~~（解決済み：トレンドグラフ実装完了・実機データ接続確認後に着手。コマンドごとに実装とGUIを同時構築し、1コマンドずつ実機確認してから次へ進める。着手順序は§4.5 F-RAM-GEAR-04参照） | ~~Low~~ |
+| ~~5~~ | ~~bridge保守コマンド（F-RAM-GEAR-04）のGUI化時期~~（解決済み・方針改訂2026-07-26：当初はトレンドグラフ実装完了後に1コマンドずつ導入する方針だったが、実際は先行して6コマンド全てを一括実装した。実機での個別動作確認が残課題。詳細は§4.5 F-RAM-GEAR-04参照） | ~~Low~~ |
 | ~~6~~ | ~~electron-builder等によるパッケージ化要否~~（解決済み：本アプリの機能実装が完了した後にパッケージ化する。開発中は既存2アプリと同様`npm start`運用とし、パッケージ化を開発の並行タスクにしない） | ~~Low~~ |
 | ~~7~~ | ~~USB通信ブリッジ（ブローカー）方式~~（解決済み：撤回。[design/IF_design.drawio](../design/IF_design.drawio)により、制御アプリ=USB専有、モニタアプリ=Bluetooth（読取専用）+USB(bridge直接)へトランスポート自体を分離する方式に変更。§7） | ~~-~~ |
 | 8〜13 | システム横断の未解決事項（BLEテレメトリサービス未実装、制御アプリ・IPC未設計、Bluetoothペアリングux、WiFi時期、ESTOP残存安全リスク、軸マッピング上限12軸の妥当性）は [design/SYSTEM_REQUIREMENTS.md §6](../design/SYSTEM_REQUIREMENTS.md) に集約管理する（本アプリのPhase6以降のブロッカーとして§9ロードマップに反映） | 集約先を参照 |
@@ -302,7 +294,7 @@ SteppingMotorDriver向け機能（BLEテレメトリ・F-RAM-CTRL中継）は外
 |-------|------|------|------|
 | 1 | プロジェクト雛形・`DeviceAdapter`インタフェース設計・単一multi_i2c_bridge接続（USB、[multi_i2c_bridge/monitor_app](../multi_i2c_bridge/monitor_app/)ロジック移植） | 実装済み | なし |
 | 2 | 軸マッピング設定UI（F-RAM-MAP）・複数multi_i2c_bridge同時接続確認 | 実装済み（複数実機同時接続のみ実機2台目待ち） | なし |
-| 3 | bridge保守コマンドGUI化（F-RAM-GEAR-04） | 未着手 | Phase2完了 |
+| 3 | bridge保守コマンドGUI化（F-RAM-GEAR-04） | 実装済み（実機での保守コマンド個別確認待ち） | Phase2完了 |
 | 4 | パラメータ設定（F-RAM-PARAM bridge分）・ログ記録（F-RAM-LOG bridge分） | 未着手 | なし |
 | 5 | パッケージ化（electron-builder等、bridge単独運用版として一旦区切る場合） | 未着手 | Phase1〜4完了 |
 | — | *（以下はSteppingMotorDriver向け機能。外部依存解消後に着手）* | | |
