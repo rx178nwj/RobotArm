@@ -199,6 +199,7 @@ function renderMaintenance(): void {
     button.disabled = !snapshot || maintenanceBusy;
   });
   const channels = new Map(snapshot?.channels.map(channel => [channel.channel, channel]) ?? []);
+  const enabledCount = [...channels.values()].filter(channel => channel.enable).length;
   $("maintenance-channels").innerHTML = Array.from({ length: 6 }, (_, channel) => {
     const data = channels.get(channel);
     const enabled = data?.enable;
@@ -209,7 +210,12 @@ function renderMaintenance(): void {
         <span>${data ? `${data.present ? "PRESENT" : "ABSENT"} · ${data.ok ? "OK" : "NOT OK"}` : "状態未取得"}</span>
         <div class="channel-actions">
           <button data-channel-enable="${channel}" class="${enabled === true ? "active" : ""}" ${!snapshot || maintenanceBusy ? "disabled" : ""}>Enable</button>
-          <button data-channel-disable="${channel}" class="${enabled === false ? "active" : ""}" ${!snapshot || maintenanceBusy ? "disabled" : ""}>Disable</button>
+          <button
+            data-channel-disable="${channel}"
+            class="${enabled === false ? "active" : ""}"
+            ${!snapshot || maintenanceBusy || (enabled === true && enabledCount <= 1) ? "disabled" : ""}
+            title="${enabled === true && enabledCount <= 1 ? "全チャンネル無効化を防ぐため操作できません" : ""}"
+          >Disable</button>
           <button data-channel-dir="${channel}" data-direction="0" class="${direction === false ? "active" : ""}" ${!snapshot || maintenanceBusy ? "disabled" : ""}>DIR 0</button>
           <button data-channel-dir="${channel}" data-direction="1" class="${direction === true ? "active" : ""}" ${!snapshot || maintenanceBusy ? "disabled" : ""}>DIR 1</button>
         </div>

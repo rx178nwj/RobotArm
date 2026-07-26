@@ -24,6 +24,12 @@ export class MultiI2cBridgeAdapter extends EventEmitter implements DeviceAdapter
     reject: (error: Error) => void;
     timer: NodeJS.Timeout;
   };
+  private commandCompletion?: {
+    resolve: (response: string) => void;
+    reject: (error: Error) => void;
+    timer: NodeJS.Timeout;
+    poll: NodeJS.Timeout;
+  };
   private periodMs = 100;
   private monitorEnabled = false;
   private status = emptyStatus();
@@ -54,6 +60,7 @@ export class MultiI2cBridgeAdapter extends EventEmitter implements DeviceAdapter
       const error = new Error(`serial port ${path} closed`);
       this.rejectInitialStatus(error);
       this.rejectCommand(error);
+      this.rejectCommandCompletion(error);
       this.port = undefined;
       this.stopTimers();
       this.snapshot.state = "disconnected";
@@ -86,6 +93,7 @@ export class MultiI2cBridgeAdapter extends EventEmitter implements DeviceAdapter
   disconnect(): void {
     this.rejectInitialStatus(new Error("Disconnected by user"));
     this.rejectCommand(new Error("Disconnected by user"));
+    this.rejectCommandCompletion(new Error("Disconnected by user"));
     this.stopTimers();
     const port = this.port;
     this.port = undefined;
@@ -130,8 +138,22 @@ export class MultiI2cBridgeAdapter extends EventEmitter implements DeviceAdapter
     this.emitUpdate();
   }
 
-  executeCommand(command: string): Promise<string> {
-    if (this.commandResponse) return Promise.reject(new Error("Another bridge command is still pending"));
+  async executeCommand(command: string): Promise<string> {
+    const response = await this.waitForCommandResponse(command);
+    if (
+      response === "OK command queued"
+      && (command === "rescan" || command === "mux reset")
+    ) {
+      const completion = await this.waitForCommandCompletion(command);
+      return `${response}; ${completion}`;
+    }
+    return response;
+  }
+
+  private waitForCommandResponse(command: string): Promise<string> {
+    if (this.commandResponse || this.commandCompletion) {
+      return Promise.reject(new Error("Another bridge command is still pending"));
+    }
     return new Promise<string>((resolve, reject) => {
       const timer = setTimeout(() => {
         if (!this.commandResponse) return;
@@ -145,6 +167,30 @@ export class MultiI2cBridgeAdapter extends EventEmitter implements DeviceAdapter
         clearTimeout(timer);
         this.commandResponse = undefined;
         reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+  }
+
+  private waitForCommandCompletion(command: string): Promise<string> {
+    if (this.commandCompletion) {
+      return Promise.reject(new Error("Another bridge command completion is still pending"));
+    }
+    return new Promise<string>((resolve, reject) => {
+      const poll = setInterval(() => {
+        try {
+          this.sendCommand("status");
+        } catch (error) {
+          this.rejectCommandCompletion(error instanceof Error ? error : new Error(String(error)));
+        }
+      }, 50);
+      const timer = setTimeout(() => {
+        this.rejectCommandCompletion(new Error(`Command completion timeout: ${command}`));
+      }, 3000);
+      this.commandCompletion = { resolve, reject, timer, poll };
+      try {
+        this.sendCommand("status");
+      } catch (error) {
+        this.rejectCommandCompletion(error instanceof Error ? error : new Error(String(error)));
       }
     });
   }
@@ -169,6 +215,7 @@ export class MultiI2cBridgeAdapter extends EventEmitter implements DeviceAdapter
         { label: "Samples", value: this.status.samples },
         { label: "Uptime", value: `${this.status.uptimeMs} ms` }
       ];
+      this.completeCommandCompletion(this.status.cmd);
       delete this.snapshot.error;
       this.completeInitialStatus();
       if (this.monitorEnabled) this.armMonitorTimeout();
@@ -200,6 +247,7 @@ export class MultiI2cBridgeAdapter extends EventEmitter implements DeviceAdapter
     this.log("system", `Serial error: ${error.message}`);
     this.rejectInitialStatus(error);
     this.rejectCommand(error);
+    this.rejectCommandCompletion(error);
     this.stopTimers();
     this.emitUpdate();
     if (this.port?.isOpen) this.port.close();
@@ -253,6 +301,25 @@ export class MultiI2cBridgeAdapter extends EventEmitter implements DeviceAdapter
     this.commandResponse = undefined;
     if (!pending) return;
     clearTimeout(pending.timer);
+    pending.reject(error);
+  }
+
+  private completeCommandCompletion(commandState: number): void {
+    const pending = this.commandCompletion;
+    if (!pending || commandState === 0x01) return;
+    this.commandCompletion = undefined;
+    clearTimeout(pending.timer);
+    clearInterval(pending.poll);
+    if (commandState === 0x00) pending.resolve("completed cmd=0x00");
+    else pending.reject(new Error(`Bridge command failed: cmd=0x${commandState.toString(16).padStart(2, "0")}`));
+  }
+
+  private rejectCommandCompletion(error: Error): void {
+    const pending = this.commandCompletion;
+    this.commandCompletion = undefined;
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    clearInterval(pending.poll);
     pending.reject(error);
   }
 

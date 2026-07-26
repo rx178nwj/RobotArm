@@ -42,6 +42,32 @@ async function verifyResponses() {
     queueMicrotask(() => this.onLine("ERR bridge command busy"));
   };
   await assert.rejects(adapter.executeCommand("rescan"), /bridge command busy/);
+
+  let statusPolls = 0;
+  adapter.sendCommand = function sendQueuedCommand(command) {
+    if (command === "rescan") {
+      queueMicrotask(() => this.onLine("OK command queued"));
+      return;
+    }
+    statusPolls += 1;
+    const commandState = statusPolls === 1 ? "0x01" : "0x00";
+    queueMicrotask(() => this.onLine(
+      `STATUS status_lo=0x00 status_hi=0x00 fault=0x00 ch_fault=0x00 present=0x00 enable=0x01 samples=1 cmd=${commandState} uptime_ms=1`
+    ));
+  };
+  assert.equal(
+    await adapter.executeCommand("rescan"),
+    "OK command queued; completed cmd=0x00"
+  );
+  assert.ok(statusPolls >= 2);
+
+  adapter.sendCommand = function sendFailedQueuedCommand(command) {
+    queueMicrotask(() => this.onLine(command === "mux reset"
+      ? "OK command queued"
+      : "STATUS status_lo=0x00 status_hi=0x00 fault=0x00 ch_fault=0x00 present=0x00 enable=0x01 samples=1 cmd=0xFF uptime_ms=1"
+    ));
+  };
+  await assert.rejects(adapter.executeCommand("mux reset"), /cmd=0xff/);
 }
 
 verifyResponses()
