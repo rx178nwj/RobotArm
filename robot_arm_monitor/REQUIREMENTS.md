@@ -181,13 +181,33 @@ RobotArm2 の各関節は以下の2系統のマイコン基板で制御・監視
 - bridgeへの直接USB接続のポーリング周期は **100ms**（[usb_serial_spec.md §4.7](../multi_i2c_bridge/docs/usb_serial_spec.md)の`monitor <100..60000|off>`が受理する下限値）とする。中継値側（SteppingMotorDriver、10ms周期でI2C取得・都度公開）より粗いが、F-RAM-GEAR-03で静止中限定判定とすることでスキューの影響を無視できるため、これ以上の高速化は不要と判断する。
 - [multi_i2c_bridge/docs/monitor_app_spec.md §5.1](../multi_i2c_bridge/docs/monitor_app_spec.md)が示す既定1000msより短いが、プロトコル許容範囲内であり、bridge単体アプリの既定値とは独立して本アプリ側で100msに設定してよい。
 
-#### F-RAM-GEAR-04: bridge保守コマンド（読み取り中心、v0.1／実装済み）
+#### F-RAM-GEAR-04: bridge保守コマンド（読み取り中心、v0.2／実装済み）
 
 **方針改訂（2026-07-26）：** 当初はトレンドグラフ（F-RAM-GRAPH）実装完了・実機データ接続確認後に、コマンドごとに1つずつ実装・実機確認する方針だった。実際にはトレンドグラフ実装（Phase 9）に先行して、`rescan`/`fault clear`/`mux reset`/`ch enable|disable`/`ch dir`/`reboot`（[usb_serial_spec.md §5](../multi_i2c_bridge/docs/usb_serial_spec.md)）の6コマンド全てのGUIを一括実装した。段階導入によるリスク低減より実装効率を優先した判断であり、以後この方針を正とする。
 
 - 全6コマンドをGUIから発行可能（`executeBridgeMaintenance`、[device-manager.ts](../src/main/device-manager.ts)）。
 - 副作用が大きいコマンド（`ch dir`／`mux reset`／`reboot`）には実行前確認ダイアログを表示する（[renderer.ts](../src/renderer/renderer.ts) `maintenanceConfirmation`）。
 - **実機での個別動作確認は未実施**（§9 ロードマップ Phase 3 参照）。各コマンドの実機確認が完了するまでは、保守コマンドGUIを実運用（本番のロボットアーム保守作業）で使用しないこと。
+
+**2026-08-01 追加：0位置設定（`ch <0..5> zero set/clear`）**
+
+multi_i2c_bridgeに追加された「0位置設定」機能（磁石取付誤差の補正、[command_spec.md §4.10](../multi_i2c_bridge/docs/command_spec.md)、[usb_serial_spec.md §5](../multi_i2c_bridge/docs/usb_serial_spec.md)）を、既存のch別保守操作（Enable/Disable/DIR）と同じチャンネルカードUIから発行できるようにする。
+
+- `BridgeMaintenanceAction` に `channel_zero_set`／`channel_zero_clear` を追加し、`ch <n> zero set`／`ch <n> zero clear` を発行する（[shared/types.ts](../src/shared/types.ts)、[device-manager.ts](../src/main/device-manager.ts) `bridgeMaintenanceCommand`）。
+- 各チャンネルカードに「0位置設定」（`caution`スタイル）・「0位置クリア」ボタンを追加（[renderer.ts](../src/renderer/renderer.ts) `renderMaintenance`）。
+- 「0位置設定」は現在位置で既存の較正値を上書きする不可逆操作のため、`ch dir`と同様に実行前確認ダイアログを表示する（`maintenanceConfirmation`）。「0位置クリア」は既定値0へ戻すだけの操作のため確認ダイアログなしとする。
+- 実行結果（`OK zero_offset=<値>`／`ERR ...`）はコマンド応答としてそのまま保守メッセージ欄に表示する（新規の状態表示・数値パースは行わない、v0.2スコープ外）。
+- **実機での動作確認は未実施**。他6コマンドと同様、実機確認完了までは本番運用で使用しないこと。
+
+**2026-08-02 追加：0位置設定後の角度の参照機能**
+
+multi_i2c_bridgeに追加された確認用コマンド `ch <0..5> angle`（[usb_serial_spec.md §4.8](../multi_i2c_bridge/docs/usb_serial_spec.md)）を用いて、「0位置設定」「0位置クリア」の実行結果（較正後の角度が期待どおりか）をチャンネルカード上でその場で参照できるようにする。
+
+- チャンネルカード（F-RAM-GEAR-04、CH別カード）に、当該chの現在角度（0位置オフセット適用後, `raw`/`deg`）を表示する参照欄を追加する。表示元は既存の周期ポーリング値（`channels`, 100ms周期, ChannelData.angle/degrees）を用い、追加のポーリングは発生させない。
+- 「0位置設定」「0位置クリア」ボタン実行直後は、次回の周期ポーリング（最大100ms後）を待たず、`ch <n> angle`（[usb_serial_spec.md §4.8](../multi_i2c_bridge/docs/usb_serial_spec.md)）をオンデマンドで1回発行し、参照欄を即時更新する（`BridgeMaintenanceAction`に`channel_angle_query`相当を追加し、既存の`executeBridgeMaintenance`経路を再利用する想定）。
+- 本参照機能は読み取り専用（bridgeの状態を変更しない）。実行前確認ダイアログは不要。
+- 表示上は較正直後の`raw`が0付近（センサノイズ・巡回タイミング分の誤差のみ）であることを目視確認できることを主目的とする。厳密な数値検証（許容誤差判定・自動アラート）は本版のスコープ外とする。
+- multi_i2c_bridge側の`ch angle`コマンド自体がファームウェア未実装（[usb_serial_spec.md §9](../multi_i2c_bridge/docs/usb_serial_spec.md)）のため、本機能もそれに依存する形で未着手とする。
 
 ### 4.6 トレンドグラフ（F-RAM-GRAPH、表示レイアウト確定）
 

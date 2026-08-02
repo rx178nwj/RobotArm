@@ -7,6 +7,12 @@ dist/
 build/
 *.pio/
 
+# robot_arm_monitor packaging resources and generated installers
+!robot_arm_monitor/build/
+!robot_arm_monitor/build/icon.svg
+!robot_arm_monitor/build/icon.png
+robot_arm_monitor/release/
+
 # Local toolchain symlinks
 multi_i2c_bridge/firmware/pico-win-toolchain
 

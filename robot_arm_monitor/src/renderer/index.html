@@ -4,19 +4,93 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Robot Arm Monitor</title>
+  <link rel="stylesheet" href="../../node_modules/uplot/dist/uPlot.min.css">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <header>
     <div>
-      <p class="eyebrow">ROBOTARM2 · PHASE 3</p>
-      <h1>Bridge connection monitor</h1>
-      <p class="description">multi_i2c_bridge の接続、軸マッピング、保守操作</p>
+      <p class="eyebrow">ROBOTARM2 · PHASE 9</p>
+      <h1>Robot arm connection monitor</h1>
+      <p class="description">multi_i2c_bridge (USB) / SteppingMotorDriver (BLE) 読み取りモニタ</p>
     </div>
-    <button id="refresh">ポートを再読込</button>
+    <div class="header-actions">
+      <div id="global-control-warning" class="global-control-warning">制御アプリ未接続 · ESTOP使用不可</div>
+      <button id="control-estop" class="estop" disabled>全停止（ESTOP）</button>
+      <button id="refresh">ポートを再読込</button>
+    </div>
   </header>
 
   <main>
+    <section class="panel dashboard-panel">
+      <div class="panel-title">
+        <div>
+          <p class="eyebrow">PHASE 9 · INTEGRATED VIEW + TRENDS</p>
+          <h2>統合ダッシュボード</h2>
+        </div>
+        <div id="dashboard-boards" class="board-state-list"></div>
+      </div>
+      <nav class="view-switcher" aria-label="統合表示の切替">
+        <button data-dashboard-view="summary" class="active">論理軸サマリー</button>
+        <button data-dashboard-view="detail">軸詳細</button>
+        <button data-dashboard-view="comparison">軸横断比較</button>
+        <button data-dashboard-view="boards">基板単位ビュー</button>
+      </nav>
+      <div id="dashboard-summary" class="dashboard-view">
+        <div class="dashboard-table-wrap">
+          <table class="dashboard-table">
+            <thead><tr><th>論理軸</th><th>状態</th><th>位置</th><th>Enc</th><th>偏差</th><th>中継角度</th><th>直接角度</th><th>差分</th><th>電流</th><th>電圧</th><th>通信</th></tr></thead>
+            <tbody id="dashboard-axis-rows"></tbody>
+          </table>
+        </div>
+      </div>
+      <div id="dashboard-detail" class="dashboard-view" hidden>
+        <div class="axis-detail-heading">
+          <label for="dashboard-axis-select">表示する論理軸</label>
+          <select id="dashboard-axis-select"></select>
+        </div>
+        <div id="axis-detail-content"></div>
+        <div class="trend-toolbar">
+          <strong>トレンド</strong>
+          <div class="trend-window" role="group" aria-label="表示時間幅">
+            <button data-trend-window="10">10s</button><button data-trend-window="30">30s</button>
+            <button data-trend-window="60" class="active">60s</button><button data-trend-window="300">300s</button>
+          </div>
+          <button id="trend-pause" data-trend-pause>一時停止</button>
+          <button id="trend-clear" data-trend-clear>履歴クリア</button>
+        </div>
+        <div class="detail-chart-grid">
+          <article><h3>速度</h3><div id="trend-velocity" class="trend-chart"></div></article>
+          <article><h3>位置 / エンコーダ</h3><div id="trend-position" class="trend-chart"></div></article>
+          <article><h3>偏差</h3><div id="trend-deviation" class="trend-chart"></div></article>
+          <article><h3>電流 / 電圧</h3><div id="trend-power" class="trend-chart"></div></article>
+          <article><h3>ギア角度 <small>赤点はIDLE時の1.0°超過</small></h3><div id="trend-gear" class="trend-chart"></div></article>
+        </div>
+      </div>
+      <div id="dashboard-comparison" class="dashboard-view" hidden>
+        <div class="comparison-toolbar">
+          <label for="comparison-metric">比較メトリック</label>
+          <select id="comparison-metric">
+            <option value="velocity">速度</option><option value="deviation">偏差</option>
+            <option value="currentMa">電流</option><option value="voltageV">電圧</option>
+            <option value="gearDiff">ギア角度差分</option>
+          </select>
+          <div class="trend-window" role="group" aria-label="比較表示時間幅">
+            <button data-trend-window="10">10s</button><button data-trend-window="30">30s</button>
+            <button data-trend-window="60" class="active">60s</button><button data-trend-window="300">300s</button>
+          </div>
+          <button data-trend-pause>一時停止</button>
+          <button data-trend-clear>履歴クリア</button>
+          <span>接続履歴中の論理軸を最大12系列で表示</span>
+        </div>
+        <div id="trend-comparison" class="trend-chart comparison-chart"></div>
+      </div>
+      <div id="dashboard-board-view" class="dashboard-view" hidden>
+        <div id="board-raw-cards" class="board-raw-cards"></div>
+      </div>
+      <p id="dashboard-updated" class="message" aria-live="polite"></p>
+    </section>
+
     <section class="panel">
       <div class="panel-title">
         <h2>シリアルポート</h2>
@@ -30,20 +104,152 @@
       <p id="message" class="message" aria-live="polite"></p>
     </section>
 
+    <section class="panel ble-panel">
+      <div class="panel-title">
+        <div>
+          <p class="eyebrow">PHASE 6 · READ ONLY</p>
+          <h2>SteppingMotorDriver BLE</h2>
+        </div>
+        <div class="ble-title-actions">
+          <span id="ble-count" class="badge">0</span>
+          <button id="ble-settings">Windowsペアリング設定</button>
+          <button id="ble-scan">BLEをスキャン</button>
+        </div>
+      </div>
+      <p class="ble-help">
+        SMDテレメトリService UUIDを広告する基板だけを表示します。初回はWindows設定で
+        「Bluetoothデバイスの追加」からJust Worksペアリングを済ませてください。
+      </p>
+      <div id="ble-devices" class="ports"><p class="empty">「BLEをスキャン」で候補を検索してください。</p></div>
+      <p id="ble-message" class="message" aria-live="polite"></p>
+    </section>
+
+    <section class="panel control-panel">
+      <div class="panel-title control-title">
+        <div>
+          <p class="eyebrow">PHASE 7 · CONTROL APP IPC</p>
+          <h2>モーション制御</h2>
+        </div>
+        <span id="control-state" class="state disconnected">制御アプリ未接続</span>
+      </div>
+      <p class="control-help">
+        論理軸を基板固有IDとローカル軸へ変換し、Named Pipe経由で制御アプリへ中継します。
+      </p>
+      <fieldset id="control-fieldset" class="control-fieldset" disabled>
+        <div class="control-axis-select">
+          <label for="control-axis">操作する論理軸</label>
+          <select id="control-axis"></select>
+        </div>
+        <div class="control-safety-actions">
+          <button data-control-command="ENABLE">ENABLE</button>
+          <button data-control-command="DISABLE">DISABLE</button>
+          <button data-control-command="STOP" class="caution">STOP</button>
+          <button data-control-command="STOP_FREE" class="caution">STOP_FREE</button>
+          <button data-control-command="CLEAR_FAULT">CLEAR_FAULT</button>
+          <button data-control-command="HOME">HOME</button>
+        </div>
+        <div class="control-motion-grid">
+          <article class="control-card">
+            <h3>ジョグ（VEL）</h3>
+            <label>速度 (steps/s)<input id="jog-speed" type="number" step="1" value="1000"></label>
+            <div class="jog-actions">
+              <button id="jog-negative">− 押下中</button>
+              <button id="jog-positive">＋ 押下中</button>
+            </div>
+            <small>押下中はVELを継続送信し、離すとSTOPします。</small>
+          </article>
+          <article class="control-card">
+            <h3>相対移動（MOVE）</h3>
+            <label>移動量 (steps)<input id="move-steps" type="number" step="1" value="1000"></label>
+            <button id="send-move">MOVEを実行</button>
+          </article>
+          <article class="control-card">
+            <h3>絶対移動（MOVETO）</h3>
+            <label>目標位置 (steps)<input id="moveto-position" type="number" step="1" value="0"></label>
+            <button id="send-moveto">MOVETOを実行</button>
+          </article>
+        </div>
+        <div class="sync-move">
+          <h3>同一基板内の同期移動（SYNC_MOVE）</h3>
+          <div id="sync-move-groups"></div>
+        </div>
+      </fieldset>
+      <p id="control-message" class="message" aria-live="polite"></p>
+      <div id="estop-results" class="estop-results"></div>
+      <div>
+        <h3 class="control-event-heading">制御イベント</h3>
+        <div id="control-events" class="control-events"><p class="empty">イベントはまだありません。</p></div>
+      </div>
+    </section>
+
     <section class="panel device-panel">
       <div class="panel-title">
         <h2>接続中の基板</h2>
         <span id="state" class="state disconnected">未接続</span>
       </div>
-      <div id="devices" class="device-list"><p class="empty">接続中の基板はありません。</p></div>
-      <div id="identity" class="identity"><span>Board ID</span><strong>—</strong></div>
-      <div id="status" class="status-grid">
-        <div><span>Port</span><strong>—</strong></div>
-        <div><span>Protocol</span><strong>—</strong></div>
-        <div><span>Samples</span><strong>—</strong></div>
-        <div><span>Uptime</span><strong>—</strong></div>
+      <div id="devices" class="device-tabs" role="tablist" aria-label="接続中の基板">
+        <p class="empty">接続中の基板はありません。</p>
       </div>
-      <button id="disconnect" class="danger" disabled>切断</button>
+      <div id="device-tab-panel" class="device-tab-panel" role="tabpanel">
+        <div id="identity" class="identity"><span>Board ID</span><strong>—</strong></div>
+        <div id="status" class="status-grid">
+          <div><span>Port</span><strong>—</strong></div>
+          <div><span>Protocol</span><strong>—</strong></div>
+          <div><span>Samples</span><strong>—</strong></div>
+          <div><span>Uptime</span><strong>—</strong></div>
+        </div>
+        <button id="disconnect" class="danger" disabled>切断</button>
+      </div>
+    </section>
+
+    <section class="panel config-panel">
+      <div class="panel-title">
+        <div>
+          <p class="eyebrow">PHASE 4 · READ ONLY</p>
+          <h2>Bridge パラメータ横断比較</h2>
+        </div>
+        <button id="refresh-config">config を再取得</button>
+      </div>
+      <p class="config-help">
+        bridgeの実効設定を読み取り専用で表示します。値の変更はこの画面では行いません。
+      </p>
+      <div class="config-table-wrap">
+        <table class="config-table">
+          <thead>
+            <tr>
+              <th>基板</th>
+              <th>ANGLE_SRC</th>
+              <th>POLL_PERIOD_MS</th>
+              <th>STATUS_DECIM</th>
+              <th>AS5600_CONF</th>
+              <th>CH_ENABLE</th>
+              <th>DIR_CONFIG</th>
+              <th>DIR_APPLIED</th>
+            </tr>
+          </thead>
+          <tbody id="config-rows"></tbody>
+        </table>
+      </div>
+      <p id="config-message" class="message" aria-live="polite"></p>
+    </section>
+
+    <section class="panel logging-panel">
+      <div class="panel-title">
+        <div>
+          <p class="eyebrow">PHASE 4 · 1000 MS</p>
+          <h2>Bridge CSVログ記録</h2>
+        </div>
+        <span id="logging-state" class="state disconnected">停止中</span>
+      </div>
+      <p class="logging-help">
+        接続中の全bridgeから status / channels / master を定期取得し、チャンネルごとに追記します。
+      </p>
+      <div class="logging-actions">
+        <button id="start-logging">保存先を選んで開始</button>
+        <button id="stop-logging" class="danger" disabled>ログ記録を停止</button>
+      </div>
+      <code id="logging-path" class="logging-path">保存先未選択</code>
+      <p id="logging-message" class="message" aria-live="polite"></p>
     </section>
 
     <section class="panel maintenance-panel">
@@ -87,6 +293,8 @@
               <th>軸</th>
               <th>Bridge基板</th>
               <th>CH</th>
+              <th>Gear DIR</th>
+              <th>Gear Offset°</th>
             </tr>
           </thead>
           <tbody id="mapping-rows"></tbody>
@@ -98,12 +306,17 @@
     <section class="panel log-panel">
       <div class="panel-title">
         <h2>送受信ログ</h2>
-        <span class="legend"><i class="tx"></i>TX <i class="rx"></i>RX</span>
+        <div class="log-title-actions">
+          <span class="legend"><i class="tx"></i>TX <i class="rx"></i>RX</span>
+          <button id="export-raw-log">CSVエクスポート</button>
+        </div>
       </div>
       <div id="log" class="log"><p class="empty">接続するとログが表示されます。</p></div>
     </section>
   </main>
 
+  <script src="../../node_modules/uplot/dist/uPlot.iife.min.js"></script>
+  <script src="trend-charts.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

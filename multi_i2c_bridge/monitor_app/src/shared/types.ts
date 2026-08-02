@@ -36,6 +36,7 @@ export interface ChannelData {
   dirOutput: boolean;
   angle: number | null;
   degrees: number | null;
+  zeroOffset: number;
   agc: number;
   magnetRaw: number;
   md: boolean;

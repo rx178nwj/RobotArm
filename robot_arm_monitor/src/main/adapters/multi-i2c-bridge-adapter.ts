@@ -1,9 +1,9 @@
 import { EventEmitter } from "node:events";
 import { SerialPort } from "serialport";
 import { ReadlineParser } from "@serialport/parser-readline";
-import type { BridgeSnapshot, BridgeStatus, RawLogEntry } from "../../shared/types";
+import type { BridgeConfig, BridgeSnapshot, BridgeStatus, RawLogEntry } from "../../shared/types";
 import type { DeviceAdapter } from "./device-adapter";
-import { parseChannel, parseDownstream, parseMaster, parseStatus } from "./parser";
+import { parseChannel, parseConfig, parseDownstream, parseMaster, parseStatus } from "./parser";
 
 const emptyStatus = (): BridgeStatus => ({
   statusLo: 0, statusHi: 0, fault: 0, chFault: 0, present: 0, enable: 0,
@@ -30,10 +30,18 @@ export class MultiI2cBridgeAdapter extends EventEmitter implements DeviceAdapter
     timer: NodeJS.Timeout;
     poll: NodeJS.Timeout;
   };
+  private configResponse?: {
+    resolve: (config: BridgeConfig) => void;
+    reject: (error: Error) => void;
+    timer: NodeJS.Timeout;
+  };
   private periodMs = 100;
   private monitorEnabled = false;
+  private loggingEnabled = false;
+  private loggingMasterPending = false;
   private status = emptyStatus();
   private snapshot: BridgeSnapshot;
+  private livePeriodMs = 100;
 
   constructor(boardId: string, protocolVersion: string, initialLog: RawLogEntry[] = []) {
     super();
@@ -45,7 +53,8 @@ export class MultiI2cBridgeAdapter extends EventEmitter implements DeviceAdapter
   }
 
   async connect(path: string, periodMs: number): Promise<void> {
-    this.periodMs = Math.max(100, Math.min(60000, periodMs));
+    this.livePeriodMs = Math.max(100, Math.min(60000, periodMs));
+    this.periodMs = this.livePeriodMs;
     this.snapshot.path = path;
     this.snapshot.state = "connecting";
     delete this.snapshot.error;
@@ -61,6 +70,7 @@ export class MultiI2cBridgeAdapter extends EventEmitter implements DeviceAdapter
       this.rejectInitialStatus(error);
       this.rejectCommand(error);
       this.rejectCommandCompletion(error);
+      this.rejectConfig(error);
       this.port = undefined;
       this.stopTimers();
       this.snapshot.state = "disconnected";
@@ -75,6 +85,7 @@ export class MultiI2cBridgeAdapter extends EventEmitter implements DeviceAdapter
       parser.on("data", (line: string) => this.onLine(line.replace(/\r$/, "")));
       await this.requestInitialStatus();
       this.sendCommand("channels");
+      this.startMonitor(this.livePeriodMs);
     } catch (error) {
       if (this.port === port) this.port = undefined;
       this.stopTimers();
@@ -94,6 +105,7 @@ export class MultiI2cBridgeAdapter extends EventEmitter implements DeviceAdapter
     this.rejectInitialStatus(new Error("Disconnected by user"));
     this.rejectCommand(new Error("Disconnected by user"));
     this.rejectCommandCompletion(new Error("Disconnected by user"));
+    this.rejectConfig(new Error("Disconnected by user"));
     this.stopTimers();
     const port = this.port;
     this.port = undefined;
@@ -109,13 +121,16 @@ export class MultiI2cBridgeAdapter extends EventEmitter implements DeviceAdapter
     this.sendCommand(`monitor ${this.periodMs}`);
     this.armMonitorTimeout();
     if (this.masterTimer) clearInterval(this.masterTimer);
-    this.masterTimer = setInterval(() => {
-      try {
-        if (this.port?.isOpen) this.sendCommand("master");
-      } catch (error) {
-        this.fail(error instanceof Error ? error : new Error(String(error)));
-      }
-    }, Math.max(3000, this.periodMs * 3));
+    this.masterTimer = undefined;
+    if (!this.loggingEnabled) {
+      this.masterTimer = setInterval(() => {
+        try {
+          if (this.port?.isOpen) this.sendCommand("master");
+        } catch (error) {
+          this.fail(error instanceof Error ? error : new Error(String(error)));
+        }
+      }, Math.max(3000, this.periodMs * 3));
+    }
   }
 
   stopMonitor(): void {
@@ -125,8 +140,51 @@ export class MultiI2cBridgeAdapter extends EventEmitter implements DeviceAdapter
     this.monitorResponseTimer = undefined;
     this.masterTimer = undefined;
     this.sendCommand("monitor off");
-    this.snapshot.state = "connecting";
+    this.snapshot.state = this.port?.isOpen ? "monitoring" : "disconnected";
     this.emitUpdate();
+  }
+
+  startLogging(periodMs = 1000): void {
+    this.loggingEnabled = true;
+    this.loggingMasterPending = false;
+    this.startMonitor(periodMs);
+  }
+
+  stopLogging(): void {
+    this.loggingEnabled = false;
+    this.loggingMasterPending = false;
+    if (this.port?.isOpen) {
+      try {
+        this.startMonitor(this.livePeriodMs);
+      } catch {
+        // The close/error handlers publish the connection failure.
+      }
+    }
+  }
+
+  requestConfig(): Promise<BridgeConfig> {
+    if (this.configResponse || this.commandResponse || this.commandCompletion) {
+      return Promise.reject(new Error("Another bridge command is still pending"));
+    }
+    return new Promise<BridgeConfig>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (!this.configResponse) return;
+        this.configResponse = undefined;
+        reject(new Error("Config response timeout"));
+      }, 2000);
+      this.configResponse = { resolve, reject, timer };
+      try {
+        this.sendCommand("config");
+      } catch (error) {
+        clearTimeout(timer);
+        this.configResponse = undefined;
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+  }
+
+  getSnapshot(): BridgeSnapshot {
+    return structuredClone(this.snapshot);
   }
 
   sendCommand(command: string): void {
@@ -151,7 +209,7 @@ export class MultiI2cBridgeAdapter extends EventEmitter implements DeviceAdapter
   }
 
   private waitForCommandResponse(command: string): Promise<string> {
-    if (this.commandResponse || this.commandCompletion) {
+    if (this.commandResponse || this.commandCompletion || this.configResponse) {
       return Promise.reject(new Error("Another bridge command is still pending"));
     }
     return new Promise<string>((resolve, reject) => {
@@ -198,6 +256,20 @@ export class MultiI2cBridgeAdapter extends EventEmitter implements DeviceAdapter
   private onLine(line: string): void {
     if (!line) return;
     this.log("rx", line);
+    let publishUpdate = line.startsWith("OK") || line.startsWith("ERR");
+    const config = parseConfig(line);
+    if (config) {
+      this.snapshot.config = config;
+      publishUpdate = true;
+      const pending = this.configResponse;
+      this.configResponse = undefined;
+      if (pending) {
+        clearTimeout(pending.timer);
+        pending.resolve(config);
+      }
+    } else if (this.configResponse && line.startsWith("ERR")) {
+      this.rejectConfig(new Error(line));
+    }
     if (this.commandResponse && (line.startsWith("OK") || line.startsWith("ERR"))) {
       const pending = this.commandResponse;
       this.commandResponse = undefined;
@@ -219,6 +291,7 @@ export class MultiI2cBridgeAdapter extends EventEmitter implements DeviceAdapter
       delete this.snapshot.error;
       this.completeInitialStatus();
       if (this.monitorEnabled) this.armMonitorTimeout();
+      else publishUpdate = true;
     } else {
       const downstream = parseDownstream(line);
       if (downstream) Object.assign(this.status, downstream);
@@ -231,14 +304,38 @@ export class MultiI2cBridgeAdapter extends EventEmitter implements DeviceAdapter
             ...this.snapshot.channels.filter(item => item.channel !== channel.channel),
             channel
           ].sort((a, b) => a.channel - b.channel);
+          // A monitor frame is complete only after the final channel. Publishing
+          // once per frame avoids cloning and rendering the same snapshot for
+          // every STATUS/FAULT/header/channel line in the serial burst.
+          if (channel.channel === 5) publishUpdate = true;
+          if (
+            this.loggingEnabled
+            && channel.channel === 5
+            && !this.loggingMasterPending
+          ) {
+            this.loggingMasterPending = true;
+            try {
+              this.sendCommand("master");
+            } catch (error) {
+              this.loggingMasterPending = false;
+              this.fail(error instanceof Error ? error : new Error(String(error)));
+            }
+          }
         } else {
           const master = parseMaster(line, this.snapshot.master?.lastActivityMs);
-          if (master) this.snapshot.master = master;
+          if (master) {
+            this.snapshot.master = master;
+            publishUpdate = true;
+            if (this.loggingEnabled && this.loggingMasterPending) {
+              this.loggingMasterPending = false;
+              this.emit("logSnapshot", structuredClone(this.snapshot));
+            }
+          }
         }
       }
     }
     this.snapshot.status = { ...this.status };
-    this.emitUpdate();
+    if (publishUpdate) this.emitUpdate();
   }
 
   private fail(error: Error): void {
@@ -248,6 +345,7 @@ export class MultiI2cBridgeAdapter extends EventEmitter implements DeviceAdapter
     this.rejectInitialStatus(error);
     this.rejectCommand(error);
     this.rejectCommandCompletion(error);
+    this.rejectConfig(error);
     this.stopTimers();
     this.emitUpdate();
     if (this.port?.isOpen) this.port.close();
@@ -323,6 +421,14 @@ export class MultiI2cBridgeAdapter extends EventEmitter implements DeviceAdapter
     pending.reject(error);
   }
 
+  private rejectConfig(error: Error): void {
+    const pending = this.configResponse;
+    this.configResponse = undefined;
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    pending.reject(error);
+  }
+
   private armMonitorTimeout(): void {
     if (this.monitorResponseTimer) clearTimeout(this.monitorResponseTimer);
     this.monitorResponseTimer = setTimeout(() => {
@@ -341,6 +447,8 @@ export class MultiI2cBridgeAdapter extends EventEmitter implements DeviceAdapter
     this.monitorResponseTimer = undefined;
     this.masterTimer = undefined;
     this.monitorEnabled = false;
+    this.loggingEnabled = false;
+    this.loggingMasterPending = false;
   }
 
   private emitUpdate(): void {

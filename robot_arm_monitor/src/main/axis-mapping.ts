@@ -7,6 +7,8 @@ interface StoredAxisMapping {
   motorLocalAxis?: number;
   bridgeBoardId?: string;
   bridgeLocalChannel?: number;
+  gearDirSign?: -1 | 1;
+  gearAngleOffset?: number;
 }
 
 interface SettingsSchema {
@@ -85,6 +87,8 @@ export function validateMappingSettings(value: MappingSettings): MappingSettings
     const bridgeBoardId = optionalId(mapping.bridgeBoardId);
     const motorLocalAxis = optionalChannel(mapping.motorLocalAxis, "motor local axis");
     const bridgeLocalChannel = optionalChannel(mapping.bridgeLocalChannel, "bridge local channel");
+    const gearDirSign = optionalGearDirection(mapping.gearDirSign);
+    const gearAngleOffset = optionalGearOffset(mapping.gearAngleOffset);
     requirePair(motorBoardId, motorLocalAxis, `Axis ${axisId} motor assignment`);
     requirePair(bridgeBoardId, bridgeLocalChannel, `Axis ${axisId} bridge assignment`);
 
@@ -103,7 +107,9 @@ export function validateMappingSettings(value: MappingSettings): MappingSettings
       axisId,
       label: label || `Axis ${axisId}`,
       ...(motorBoardId === undefined ? {} : { motorBoardId, motorLocalAxis }),
-      ...(bridgeBoardId === undefined ? {} : { bridgeBoardId, bridgeLocalChannel })
+      ...(bridgeBoardId === undefined ? {} : { bridgeBoardId, bridgeLocalChannel }),
+      ...(gearDirSign === undefined ? {} : { gearDirSign }),
+      ...(gearAngleOffset === undefined ? {} : { gearAngleOffset })
     };
   }).sort((a, b) => a.axisId - b.axisId);
 
@@ -117,6 +123,22 @@ export function validateMappingSettings(value: MappingSettings): MappingSettings
     boardLabels[normalizedId] = String(label ?? "").trim().slice(0, 64);
   }
   return { axisMapping, boardLabels };
+}
+
+function optionalGearDirection(value: unknown): -1 | 1 | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  const direction = Number(value);
+  if (direction !== -1 && direction !== 1) throw new Error("Gear direction must be -1 or 1");
+  return direction;
+}
+
+function optionalGearOffset(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  const offset = Number(value);
+  if (!Number.isFinite(offset) || offset < -360 || offset > 360) {
+    throw new Error("Gear angle offset must be between -360 and 360 degrees");
+  }
+  return offset;
 }
 
 function optionalId(value: unknown): string | undefined {

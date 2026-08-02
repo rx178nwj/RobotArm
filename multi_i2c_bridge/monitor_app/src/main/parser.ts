@@ -44,13 +44,19 @@ export function parseChannel(line: string): ChannelData | null {
   if (!/^\d+\s/.test(line)) return null;
   const p = line.trim().split(/\s+/);
   if (p.length < 17) return null;
+  // USB protocol v1.1 inserts ZERO_OFF after DEGREE. Keep accepting v1.0 rows.
+  const hasZeroOffset = p.length >= 18;
+  const tail = hasZeroOffset ? 1 : 0;
   const invalid = p[6] === "invalid";
   return {
     channel: num(p[0]), present: p[1] === "1", enable: p[2] === "1", ok: p[3] === "1",
     dirConfig: p[4] === "1", dirOutput: p[5] === "1",
     angle: invalid ? null : num(p[6]), degrees: invalid ? null : num(p[7]),
-    agc: num(p[8]), magnetRaw: num(p[9]), md: p[10] === "1", ml: p[11] === "1", mh: p[12] === "1",
-    readOk: num(p[13]), readErr: num(p[14]), lastOkMs: num(p[15]), lastErrMs: num(p[16])
+    zeroOffset: hasZeroOffset ? num(p[8]) : 0,
+    agc: num(p[8 + tail]), magnetRaw: num(p[9 + tail]), md: p[10 + tail] === "1",
+    ml: p[11 + tail] === "1", mh: p[12 + tail] === "1",
+    readOk: num(p[13 + tail]), readErr: num(p[14 + tail]),
+    lastOkMs: num(p[15 + tail]), lastErrMs: num(p[16 + tail])
   };
 }
 

@@ -1,4 +1,4 @@
-# RobotArm2 システム要求仕様書（マスター）
+﻿# RobotArm2 システム要求仕様書（マスター）
 
 RobotArm2 を構成する全サブシステム（ファームウェア・回路・PCアプリ）の要求仕様書を束ね、
 どのサブシステムにも一意に属さない**システム横断の決定事項**（トポロジー、通信アーキテクチャ、
@@ -34,7 +34,7 @@ RobotArm2 は、複数の**SteppingMotorDriver基板**（モーション制御�
 | multi_i2c_bridge USBシリアル診断IF | 監視・保守・強制制御コマンド | [multi_i2c_bridge/docs/usb_serial_spec.md](../multi_i2c_bridge/docs/usb_serial_spec.md) | 実装済み |
 | multi_i2c_bridge monitor_app | 単体デバッグ用Electronアプリ（USB-CDC） | [multi_i2c_bridge/docs/monitor_app_spec.md](../multi_i2c_bridge/docs/monitor_app_spec.md) | 部分実装 |
 | robot_arm_monitor | 統合監視アプリ（本書§4の役割分担を実装） | [robot_arm_monitor/REQUIREMENTS.md](../robot_arm_monitor/REQUIREMENTS.md)、[docs/design_spec.md](../robot_arm_monitor/docs/design_spec.md) | 未実装（Phase1〜5は依存なく着手可、Phase6以降は本書§6の外部依存待ち） |
-| 制御アプリ | モーション制御専用アプリ（USB専有） | 未作成（本書§6 #2） | 未着手・未設計 |
+| 制御アプリ | モーション制御専用アプリ（USB専有） | [design/CONTROL_APP_REQUIREMENTS.md](CONTROL_APP_REQUIREMENTS.md)（IPC中継プロトコルのみ確定。GUI・USB接続管理UX等は未作成、同書§8 #1） | 未着手（IPCプロトコル確定、実装は未着手） |
 
 ---
 
@@ -94,11 +94,12 @@ SteppingMotorDriverへは、モニタアプリ・制御アプリの2プロセス
 | # | 項目 | 優先度 | 影響先 |
 |---|------|--------|--------|
 | ~~1~~ | ~~SteppingMotorDriverファームウェアへのBLEテレメトリサービス未実装~~（解決済み：[BLE_WIFI_REQUIREMENTS.md](../SteppingMotorDriver/firmware/BLE_WIFI_REQUIREMENTS.md) §4 でGATTサービス・キャラクタリスティック（Device Info/Axis Status/Power/Fault Info/Gear Angle、既存USBコマンドのJSON構造を転用）を確定。実装は未着手（同書§10 Phase1〜2）） | ~~High~~ | robot_arm_monitor（Phase6ブロッカー、要件定義完了により着手可能） |
-| 2 | 制御アプリ本体・モニタアプリとのIPC中継プロトコル未設計（コマンド形式・認証要否・接続確認方法） | High | robot_arm_monitor（Phase7ブロッカー） |
+| ~~2~~ | ~~制御アプリ本体・モニタアプリとのIPC中継プロトコル未設計~~（解決済み：[design/CONTROL_APP_REQUIREMENTS.md](CONTROL_APP_REQUIREMENTS.md)でWindows Named Pipe・改行区切りJSON・基板固有ID＋ローカル軸番号でのコマンドマッピング・ESTOP集約仕様を確定。制御アプリ自身のGUI要求仕様書は同書§8 #1として別途未解決） | ~~High~~ | robot_arm_monitor（Phase7ブロッカー解消、実装は未着手） |
 | ~~3~~ | ~~Bluetoothデバイス検出・ペアリングのUX未検討~~（解決済み：[BLE_WIFI_REQUIREMENTS.md](../SteppingMotorDriver/firmware/BLE_WIFI_REQUIREMENTS.md) §4.2/§4.4 でAdvertising名`SMD-<board_id>`によるUSB VID一次分類相当の識別、LE Secure Connections + Just Works + ボンディングによるペアリング方式を確定） | ~~Medium~~ | robot_arm_monitor |
 | ~~4~~ | ~~WiFi追加実装の時期・用途未定~~（解決済み：[BLE_WIFI_REQUIREMENTS.md](../SteppingMotorDriver/firmware/BLE_WIFI_REQUIREMENTS.md) §5 で用途を「BLEの代替・追加の高帯域テレメトリ経路」に確定。SSID/パスワードはUSB-CDC経由でプロビジョニング。実装は未着手（同書§10 Phase3〜4）） | ~~Low~~ | 全体 |
 | 5 | **残存安全リスク**：ESTOPが制御アプリへの中継経路のみを通るため、制御アプリが未起動・無応答の場合はモニタアプリからのESTOPも実行できない（§4で確定した仕様上の制約。無線への例外は設けない方針のため恒久的に残る） | High | robot_arm_monitor、制御アプリ、安全設計全体 |
 | 6 | 軸マッピングの上限12軸（4基板×3軸）が実際の将来要件と一致するか | Low | 全体 |
+| 7 | 制御アプリ自身の要求仕様書（GUI構成、USB接続管理UX、パラメータ設定範囲）が未作成 | High | 制御アプリ（[CONTROL_APP_REQUIREMENTS.md](CONTROL_APP_REQUIREMENTS.md) §8 #1、IPC中継プロトコルとは別に必要） |
 
 各サブシステム固有の未解決事項は、それぞれの要求仕様書（§2）を参照。
 
@@ -116,3 +117,8 @@ SteppingMotorDriverへは、モニタアプリ・制御アプリの2プロセス
 | 2026-07-25 | モニタアプリのモーション制御操作は制御アプリへのIPC中継方式に確定。ESTOPも同経路のみを通ることを確定し、残存安全リスクとして記録 |
 | 2026-07-25 | システム横断の要求仕様（本書）を新設し、[robot_arm_monitor/REQUIREMENTS.md](../robot_arm_monitor/REQUIREMENTS.md) §7 の内容を移管 |
 | 2026-07-25 | SteppingMotorDriverのBLE・WiFi通信要件を新設（[BLE_WIFI_REQUIREMENTS.md](../SteppingMotorDriver/firmware/BLE_WIFI_REQUIREMENTS.md)）。GATTサービス構成（既存USBコマンドのJSON構造を転用）、ペアリング方式（Just Works+ボンディング）、WiFi用途（BLE代替の高帯域テレメトリ、USB-CDC経由プロビジョニング）を確定し、§6 #1/#3/#4をクローズ |
+| 2026-08-01 | multi_i2c_bridgeに0位置設定機能（磁石取付誤差の補正）を追加。ch毎に現在位置を0degとして設定するコマンド（上流I2C `CMD=ZERO_SET`/USBシリアル`ch zero set`）と、オフセットのEEPROM永続化を要件化し、Arduino版ファームウェアへ実装（[multi_i2c_bridge/docs/design_spec.md](../multi_i2c_bridge/docs/design_spec.md) §5.5、[command_spec.md](../multi_i2c_bridge/docs/command_spec.md) §4.10） |
+| 2026-08-01 | SteppingMotorDriverに、multi_i2c_bridgeの0位置設定を発行する`SET GEAR_ZERO`/`GEAR_ZERO_CLEAR`コマンドを追加（[GEAR_ANGLE_MONITOR_REQUIREMENTS.md F-GEAR-10](../SteppingMotorDriver/firmware/GEAR_ANGLE_MONITOR_REQUIREMENTS.md)）。BLE/WiFi経由での発行案を検討したが、§4の恒久方針（BLE/WiFiは読み取り専用・書き込みコマンド恒久対象外）を維持することを確認し、**USB-CDC（制御アプリ）限定**で確定。BLE/WiFiは較正状態の参照（`zero_calibrated`）のみ追加（[BLE_WIFI_REQUIREMENTS.md](../SteppingMotorDriver/firmware/BLE_WIFI_REQUIREMENTS.md) §1.3/§4.1） |
+| 2026-07-26 | 制御アプリ・モニタアプリのIPC中継プロトコルを新設（[CONTROL_APP_REQUIREMENTS.md](CONTROL_APP_REQUIREMENTS.md)）。Windows Named Pipe・改行区切りJSON、基板固有ID＋ローカル軸番号でのコマンドアドレス指定、ESTOP集約の並行発行方式を確定し、§6 #2をクローズ。制御アプリ自身のGUI要求仕様書は新たな未解決事項（§6 #7）として記録 |
+| 2026-08-01 | robot_arm_monitorのbridge保守コマンドGUIに0位置設定（`ch <0..5> zero set/clear`）を追加。チャンネルカードにボタンを追加し、`channel_zero_set`実行時のみ確認ダイアログを表示（[robot_arm_monitor/REQUIREMENTS.md F-RAM-GEAR-04](../robot_arm_monitor/REQUIREMENTS.md)） |
+| 2026-08-02 | multi_i2c_bridgeに0位置設定後の角度確認用USBコマンド`ch <0..5> angle`を要件化（[usb_serial_spec.md §4.8](../multi_i2c_bridge/docs/usb_serial_spec.md)、ファームウェア未実装）。robot_arm_monitorにも対応する参照機能（チャンネルカードでの角度即時表示）を要件化（[robot_arm_monitor/REQUIREMENTS.md F-RAM-GEAR-04](../robot_arm_monitor/REQUIREMENTS.md)、いずれも未実装） |

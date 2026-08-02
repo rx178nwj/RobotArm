@@ -1,0 +1,50 @@
+{
+  "name": "robotarm-control-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "RobotArm2 SteppingMotorDriver USB control and IPC relay",
+  "author": "RobotArm2 Project",
+  "main": "dist/main/main.js",
+  "scripts": {
+    "build": "tsc && node scripts/copy-static.mjs",
+    "start": "npm run build && electron .",
+    "dev": "npm run build && electron .",
+    "dist": "npm run build && electron-builder",
+    "test": "npm run build && node test/phase1-e2e.cjs",
+    "test:client": "node test/mock-ipc-client.cjs"
+  },
+  "dependencies": {
+    "serialport": "^13.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3",
+    "typescript": "^5.8.3"
+  },
+  "build": {
+    "appId": "com.robotarm2.control",
+    "productName": "Robot Arm Control",
+    "asar": true,
+    "npmRebuild": false,
+    "directories": { "output": "release" },
+    "files": [
+      "dist/**/*",
+      "node_modules/**/*",
+      "package.json",
+      "!**/*.map",
+      "!**/*.ts",
+      "!**/test{,s}/**/*"
+    ],
+    "asarUnpack": ["node_modules/@serialport/bindings-cpp/**/*"],
+    "win": {
+      "executableName": "RobotArmControl",
+      "target": [{ "target": "nsis", "arch": ["x64"] }]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "Robot-Arm-Control-Setup-${version}.${ext}"
+    }
+  }
+}

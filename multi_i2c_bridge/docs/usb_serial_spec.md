@@ -1,4 +1,4 @@
-# USBシリアル 監視・デバッグインタフェース仕様書
+﻿# USBシリアル 監視・デバッグインタフェース仕様書
 
 ブリッジマイコン（RP2040）の USB-CDC シリアルに対する、テキストコマンドベースの監視・保守・強制制御インタフェースの確定仕様。
 上流I2C（[command_spec.md](command_spec.md)）とは**独立した第2の管理チャネル**であり、通常のI2Cブリッジ動作（上流応答・下流ポーリング）を止めずに使う。
@@ -7,9 +7,9 @@
 |------|------|
 | 対象 | USB-CDCシリアル（Host PC ⇔ RP2040ブリッジ, デバッグ/保守用） |
 | 関連 | [design_spec.md](design_spec.md) §9（位置づけ）/ [command_spec.md](command_spec.md)（上流I2Cレジスタの正）/ [software_architecture.md](software_architecture.md)（FW構造） |
-| 版 | 1.0（6ch確定仕様。3ch版 `firmware_arduino/firmware_arduino.ino` の実装を6ch化・仕様化したもの） |
-| 作成日 | 2026-07-19 |
-| 実装状況 | `firmware_arduino/firmware_arduino.ino` に **6ch版実装済み**（`ch <0..5>`, DIR=GP5-10, レジスタマップはcommand_spec.md v1.0に追従。2026-07-19）。`firmware/`（pico-sdkネイティブ版）は未実装（§9） |
+| 版 | 1.2（0位置設定後の角度確認コマンド`ch angle`追加、§4.8） |
+| 作成日 | 2026-07-19（初版）／2026-08-01 改訂（`ch zero set/clear`追加）／2026-08-02 改訂（`ch angle`追加） |
+| 実装状況 | `firmware_arduino/firmware_arduino.ino` に **6ch/USB仕様v1.2版実装済み**（上流I2Cレジスタ仕様はv1.1のまま）。`ch <0..5>`, DIR=GP5-10, 0位置設定・角度確認を含む（2026-08-02）。`firmware/`（pico-sdkネイティブ版）は未実装（§9） |
 
 ---
 
@@ -93,13 +93,13 @@ CH_FAULTS none
 
 出力例（6ch, ch2が未接続、ch4が故障中の例）：
 ```
-CH PRESENT ENABLE OK DIR_CFG DIR_OUT ANGLE DEGREE  AGC MAG_RAW MD ML MH READ_OK  READ_ERR LAST_OK_MS LAST_ERR_MS
-0  1       1      1  0       0       2748   241.578 128 0x20    1  0  0  98765    0        123        0
-1  1       1      1  0       0       0512   45.000  130 0x20    1  0  0  98765    0        123        0
-2  0       0      0  0       0       invalid invalid 255 0xFF    0  0  0  0        0        0          0
-3  1       1      1  0       0       3900   342.773 126 0x20    1  0  0  98765    0        123        0
-4  1       1      0  0       0       1024   90.000  0   0x00    0  0  0  50000    120      45000      98700
-5  1       1      1  1       1       0999   87.891  131 0x20    1  0  0  98765    0        123        0
+CH PRESENT ENABLE OK DIR_CFG DIR_OUT ANGLE DEGREE  ZERO_OFF AGC MAG_RAW MD ML MH READ_OK  READ_ERR LAST_OK_MS LAST_ERR_MS
+0  1       1      1  0       0       2748   241.578 0000     128 0x20    1  0  0  98765    0        123        0
+1  1       1      1  0       0       0512   45.000  1200     130 0x20    1  0  0  98765    0        123        0
+2  0       0      0  0       0       invalid invalid 0000     255 0xFF    0  0  0  0        0        0          0
+3  1       1      1  0       0       3900   342.773 0000     126 0x20    1  0  0  98765    0        123        0
+4  1       1      0  0       0       1024   90.000  0000     0   0x00    0  0  0  50000    120      45000      98700
+5  1       1      1  1       1       0999   87.891  0000     131 0x20    1  0  0  98765    0        123        0
 ```
 
 列定義：
@@ -112,7 +112,8 @@ CH PRESENT ENABLE OK DIR_CFG DIR_OUT ANGLE DEGREE  AGC MAG_RAW MD ML MH READ_OK 
 | `OK` | `STATUS_LO.CHn_OK`（磁石検出OK かつ通信OK） |
 | `DIR_CFG` | `DIR_CONFIG` の該当bit（設定値） |
 | `DIR_OUT` | 実際のDIR GPIO出力レベル（`DIR_CFG` との差分は反映待ちの可能性を示す） |
-| `ANGLE`/`DEGREE` | 現在の角度（RAW/ANGLE いずれか、`CONFIG.ANGLE_SRC` に従う）と度数換算。無効ch(`ENABLE=0`)は `invalid` |
+| `ANGLE`/`DEGREE` | 現在の角度（`CHn_ZERO_OFFSET`適用後、RAW/ANGLE いずれか`CONFIG.ANGLE_SRC` に従う）と度数換算。無効ch(`ENABLE=0`)は `invalid` |
+| `ZERO_OFF` | `CHn_ZERO_OFFSET`（[command_spec.md](command_spec.md) §4.10）の現在値（12bit）。`ANGLE`列は既にこの値を差し引き済み |
 | `AGC` | AGC値。故障chは`0`、無効chは`255`（[command_spec.md](command_spec.md) §5.4のマーカに一致） |
 | `MAG_RAW`/`MD`/`ML`/`MH` | AS5600 STATUSレジスタ生値とデコード（磁石検出/弱/強） |
 | `READ_OK`/`READ_ERR` | 起動来の下流読み出し成功/失敗回数（ch別） |
@@ -162,6 +163,22 @@ LOG entries=3 latest=657276
 OK monitor period_ms=1000
 ```
 
+### 4.8 `ch <0..5> angle`（0位置設定後の角度確認、新規）
+
+指定chの**現在の角度**（`CHn_ANGLE`ホットパスと同一の、0位置オフセット適用後の値、[command_spec.md §5.2](command_spec.md)）を単独で取得する。`ch <0..5> zero set`/`zero clear`（§5）の直後に、`channels`（§4.3）の全ch分の出力を待たずに対象chの結果だけを即座に確認する用途を想定する。
+
+```
+> ch 1 angle
+OK ch=1 ok=1 raw=0000 deg=0.000 zero_offset=1200
+```
+
+- `raw`：0位置オフセット適用後の角度（12bit, 0–4095）。`ch <n> zero set`直後は理論上 `0000`（許容誤差はセンサノイズ・巡回タイミング分のみ）。
+- `deg`：`raw`の度数換算（`raw * 360.0 / 4096.0`）。
+- `zero_offset`：当該chに現在適用中の`CHn_ZERO_OFFSET`（[command_spec.md §4.10](command_spec.md)）。0位置未設定（既定）なら`0`。
+- `ok`：`STATUS_LO.CHn_OK`。`0`の場合、`raw`/`deg`は旧値保持（無効な可能性がある値）として扱うこと（§4.3 `channels`と同じ解釈）。
+- 無効ch（`CH_ENABLE`該当bit=0）は `ERR channel disabled` を返す。
+- 本コマンドは読み取り専用（副作用なし）。`channels`（§4.3）の対象ch分を1行に絞った軽量版であり、上流I2Cレジスタの新規追加は不要（既存の内部キャッシュ値を返すのみ）。
+
 ---
 
 ## 5. 保守コマンド
@@ -174,9 +191,13 @@ OK monitor period_ms=1000
 | `stats clear` | 下流バス統計・ch別`READ_OK/READ_ERR`カウンタをクリア（上流ログ・カウンタとは別管理） | 上流レジスタに相当なし（USB診断専用の追加カウンタ） |
 | `ch <0..5> enable` / `ch <0..5> disable` | `CH_ENABLE` の該当bitを変更（全ch無効化は拒否） | `CH_ENABLE`(0x47) 書込 |
 | `ch <0..5> dir <0\|1>` | `DIR_CONFIG` の該当bitを設定し即時反映 | `DIR_CONFIG`(0x42) 書込, `APPLY_NOW`相当 |
+| `ch <0..5> zero set` | 現在のRAW_ANGLEを当該chの0位置オフセットとして設定・EEPROM保存（[command_spec.md](command_spec.md) §4.10） | `ZERO_CH_SELECT`(0x52) 書込 → `CMD=ZERO_SET`(0x10) |
+| `ch <0..5> zero clear` | 当該chの0位置オフセットを0へリセット・EEPROM保存 | `ZERO_CH_SELECT`(0x52) 書込 → `CMD=ZERO_CLEAR`(0x11) |
 | `reboot` | ウォッチドッグ経由の再起動（`SOFT_RESET`と同義） | `CMD=SOFT_RESET` |
 
 USBシリアル経由の保守操作は、上流I2Cレジスタ経由の操作と**同一のFW内部機構**（コマンドメールボックス／`config.dirty`）を共有する。すなわちUSB側の`rescan`と上流側の`CMD=RESCAN`は同じ実行パスであり、二重定義にはならない（[software_architecture.md](software_architecture.md) §7.1）。
+
+`ch <0..5> zero set`は無効ch/無応答chに対しては`ERR`を返し、オフセットを変更しない（[command_spec.md](command_spec.md) §4.10のZERO_SET失敗条件と同一）。成功時は`OK zero_offset=<12bit値>`のように設定後のオフセット値を返す。
 
 ---
 
@@ -264,6 +285,8 @@ USBシリアル機能は [software_architecture.md](software_architecture.md) �
 - [x] AS5600 raw read/write（`ch read`/`ch write`）を追加、BURN(0xFF)書込禁止を確定（§6.2）。
 - [x] 通常運用（上流応答・下流ポーリング）を阻害しない非ブロッキング設計（ISR外処理、Core1メールボックス経由）（§7）。
 - [x] `firmware_arduino.ino` の6ch移植を実施（§8、2026-07-19）。
+- [x] 0位置設定コマンド `ch <0..5> zero set/clear` を追加し、上流`ZERO_CH_SELECT`/`CMD=ZERO_SET/ZERO_CLEAR`と同じCore1コマンドメールボックス経路でArduino版ファームウェアへ実装（§5、[command_spec.md](command_spec.md) §4.10、2026-08-01）。
+- [x] 0位置設定後の確認用に `ch <0..5> angle` を追加（§4.8、2026-08-02）。既存の内部角度キャッシュ（`channels`と同一データソース）を1ch分だけ返す読み取り専用コマンドとしてArduino版ファームウェアへ実装済み。
 
 ### 実装前に要確認（☐）
 - [ ] 診断メールボックス（`ch read`/`ch write`）の下流巡回への割込み遅延の実測（通常巡回タイミング予算への影響、[i2c_architecture.md](i2c_architecture.md) §5.5との整合確認）。

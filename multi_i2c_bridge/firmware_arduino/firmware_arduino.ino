@@ -11,6 +11,7 @@
 #include "hardware/regs/i2c.h"
 #include "hardware/structs/i2c.h"
 #include "hardware/watchdog.h"
+#include "pico/mutex.h"
 
 #ifndef MULTI_I2C_BRIDGE_USB_CONSOLE
 #define MULTI_I2C_BRIDGE_USB_CONSOLE 1
@@ -40,7 +41,7 @@ constexpr uint8_t kRedLed = 28;
 
 constexpr uint32_t kI2cBaud = 400000;
 constexpr uint8_t kWhoAmI = 0xB6;
-constexpr uint8_t kVersion = 0x10;  // major=1(6ch)/minor=0, command_spec.md §9.1
+constexpr uint8_t kVersion = 0x11;  // major=1(6ch)/minor=1, command_spec.md §9.1
 constexpr uint16_t kAs5600ConfDefault = 0x0A00;
 constexpr uint8_t kChMask = 0x3Fu;  // bit0-5 = ch0-5
 
@@ -56,12 +57,35 @@ constexpr size_t kUpstreamLogDepth = 64;
 constexpr size_t kDiagPayloadMax = 8;
 constexpr uint32_t kIdentityMagic = 0x31444942u;  // "BID1"
 constexpr size_t kIdentityLength = 16;
+constexpr uint32_t kZeroOffsetsMagic = 0x31524F5Au;  // "ZOR1"
 
 struct StoredIdentity {
   uint32_t magic;
   char id[kIdentityLength + 1];
   uint8_t checksum;
 };
+
+struct StoredZeroOffsets {
+  uint32_t magic;
+  uint16_t offset[kChannelCount];
+  uint8_t checksum;
+};
+
+constexpr size_t kIdentityEepromOffset = 0u;
+constexpr size_t kZeroOffsetsEepromOffset = sizeof(StoredIdentity);
+constexpr size_t kEepromSize = kZeroOffsetsEepromOffset + sizeof(StoredZeroOffsets);
+
+std::atomic<uint16_t> gZeroOffsets[kChannelCount]{};
+std::atomic<bool> gZeroPersistenceDirty{false};
+mutex_t gEepromMutex;
+
+void lockEeprom() {
+  mutex_enter_blocking(&gEepromMutex);
+}
+
+void unlockEeprom() {
+  mutex_exit(&gEepromMutex);
+}
 
 char gBridgeIdentity[kIdentityLength + 1]{};
 
@@ -94,9 +118,8 @@ void copyIdentity(char *destination, const char *source) {
 }
 
 void loadBridgeIdentity() {
-  EEPROM.begin(sizeof(StoredIdentity));
   StoredIdentity stored{};
-  EEPROM.get(0, stored);
+  EEPROM.get(kIdentityEepromOffset, stored);
   if (stored.magic == kIdentityMagic && validIdentity(stored.id) &&
       stored.checksum == identityChecksum(stored.id)) {
     copyIdentity(gBridgeIdentity, stored.id);
@@ -113,15 +136,63 @@ bool saveBridgeIdentity(const char *id) {
   stored.magic = kIdentityMagic;
   copyIdentity(stored.id, id);
   stored.checksum = identityChecksum(stored.id);
-  EEPROM.put(0, stored);
-  if (!EEPROM.commit()) {
+  lockEeprom();
+  EEPROM.put(kIdentityEepromOffset, stored);
+  const bool committed = EEPROM.commit();
+  unlockEeprom();
+  if (!committed) {
     return false;
   }
   copyIdentity(gBridgeIdentity, stored.id);
   return true;
 }
 
-// レジスタマップ確定仕様: command_spec.md §3 (6ch/v1.0)
+uint8_t zeroOffsetsChecksum(const StoredZeroOffsets &stored) {
+  uint8_t checksum = 0x5Au;
+  for (uint8_t ch = 0; ch < kChannelCount; ++ch) {
+    const uint16_t value = stored.offset[ch] & 0x0FFFu;
+    checksum = static_cast<uint8_t>((checksum << 1u) | (checksum >> 7u));
+    checksum ^= static_cast<uint8_t>(value & 0xFFu);
+    checksum = static_cast<uint8_t>((checksum << 1u) | (checksum >> 7u));
+    checksum ^= static_cast<uint8_t>((value >> 8) & 0x0Fu);
+  }
+  return checksum;
+}
+
+void loadZeroOffsets() {
+  StoredZeroOffsets stored{};
+  EEPROM.get(kZeroOffsetsEepromOffset, stored);
+  const bool valid = stored.magic == kZeroOffsetsMagic &&
+                     stored.checksum == zeroOffsetsChecksum(stored);
+  for (uint8_t ch = 0; ch < kChannelCount; ++ch) {
+    gZeroOffsets[ch].store(valid ? (stored.offset[ch] & 0x0FFFu) : 0u,
+                           std::memory_order_relaxed);
+  }
+}
+
+bool saveZeroOffsets() {
+  StoredZeroOffsets stored{};
+  stored.magic = kZeroOffsetsMagic;
+  for (uint8_t ch = 0; ch < kChannelCount; ++ch) {
+    stored.offset[ch] = gZeroOffsets[ch].load(std::memory_order_relaxed) & 0x0FFFu;
+  }
+  stored.checksum = zeroOffsetsChecksum(stored);
+
+  lockEeprom();
+  EEPROM.put(kZeroOffsetsEepromOffset, stored);
+  const bool committed = EEPROM.commit();
+  unlockEeprom();
+  return committed;
+}
+
+void initPersistentStorage() {
+  mutex_init(&gEepromMutex);
+  EEPROM.begin(kEepromSize);
+  loadBridgeIdentity();
+  loadZeroOffsets();
+}
+
+// レジスタマップ確定仕様: command_spec.md §3 (6ch/v1.1)
 constexpr uint8_t REG_WHO_AM_I = 0x00;
 constexpr uint8_t REG_VERSION = 0x01;
 constexpr uint8_t REG_STATUS_LO = 0x02;
@@ -142,7 +213,9 @@ constexpr uint8_t REG_AS5600_CONF_LO = 0x44;  // 2 bytes, 0x44-0x45
 constexpr uint8_t REG_CH_PRESENT = 0x46;
 constexpr uint8_t REG_CH_ENABLE = 0x47;
 constexpr uint8_t REG_CMD = 0x50;
-constexpr uint8_t REG_COUNT = 0x51;  // txStaging size (indices 0x00..0x50)
+constexpr uint8_t REG_ZERO_CH_SELECT = 0x52;
+constexpr uint8_t REG_CH0_ZERO_OFFSET = 0x60;  // 12 bytes, 0x60-0x6B
+constexpr uint8_t REG_COUNT = 0x6C;  // txStaging size (indices 0x00..0x6B)
 
 // STATUS_HI (0x03) ビット定義, command_spec.md §4.1
 constexpr uint8_t STATUS_HI_DEGRADED = 1u << 0;
@@ -165,10 +238,13 @@ constexpr uint8_t CMD_NOP = 0x00;
 constexpr uint8_t CMD_CLEAR_FAULT = 0x01;
 constexpr uint8_t CMD_MUX_RESET = 0x02;
 constexpr uint8_t CMD_RESCAN = 0x03;
+constexpr uint8_t CMD_ZERO_SET = 0x10;
+constexpr uint8_t CMD_ZERO_CLEAR = 0x11;
 constexpr uint8_t CMD_SOFT_RESET = 0xA5;
 
 struct SensorSnapshot {
   uint16_t angle[kChannelCount];
+  uint16_t rawAngle[kChannelCount];
   uint8_t agc[kChannelCount];
   uint8_t magnetStatus[kChannelCount];
   uint8_t chOkMask;
@@ -197,9 +273,12 @@ struct SysStatus {
 
 struct CmdMailbox {
   volatile uint8_t reqCmd;
+  volatile uint8_t reqZeroMask;
   volatile uint32_t reqSeq;
   volatile uint32_t ackSeq;
   volatile uint8_t result;
+  volatile uint32_t lastZeroSeq;
+  volatile uint8_t lastZeroResult;
 };
 
 struct BridgeRegs {
@@ -222,6 +301,7 @@ struct WriteResult {
   bool dispatchCmd = false;
   bool applyNow = false;
   uint8_t cmdOpcode = 0;
+  uint8_t zeroMask = 0;
   uint8_t dirMask = 0;
 };
 
@@ -285,6 +365,9 @@ struct ConsoleState {
   uint32_t monitorPeriodMs = 1000;
   uint32_t lastMonitorMs = 0;
   uint32_t pendingDiagSequence = 0;
+  uint32_t pendingZeroSequence = 0;
+  uint8_t pendingZeroChannel = 0;
+  uint8_t pendingZeroCommand = CMD_NOP;
 };
 
 SensorSnapshot gBuffers[2];
@@ -311,6 +394,7 @@ bool gBlueLedOn = false;
 bool gYellowLedOn = false;
 
 volatile uint8_t gChPresent = 0;
+volatile uint8_t gZeroChSelect = 0;
 volatile uint8_t gCmdReadback = CMD_IDLE;
 volatile bool gCore0Alive = false;
 volatile bool gCore1Alive = false;
@@ -322,6 +406,7 @@ void seedSnapshot(SensorSnapshot &snap) {
   memset(&snap, 0, sizeof(snap));
   for (uint8_t ch = 0; ch < kChannelCount; ++ch) {
     snap.angle[ch] = 0xFFFFu;
+    snap.rawAngle[ch] = 0xFFFFu;
     snap.agc[ch] = 0xFFu;
     snap.magnetStatus[ch] = 0u;
   }
@@ -468,6 +553,14 @@ void writeLe32(uint8_t *dst, uint32_t value) {
   dst[3] = static_cast<uint8_t>((value >> 24) & 0xFFu);
 }
 
+uint16_t calibratedAngle(uint16_t rawAngle, uint8_t channel) {
+  if (rawAngle == 0xFFFFu) {
+    return 0xFFFFu;
+  }
+  const uint16_t offset = gZeroOffsets[channel].load(std::memory_order_relaxed);
+  return static_cast<uint16_t>((rawAngle - offset) & 0x0FFFu);
+}
+
 bool isDefinedReadOffset(uint8_t reg) {
   if (reg == REG_WHO_AM_I || reg == REG_VERSION || reg == REG_STATUS_LO || reg == REG_STATUS_HI ||
       reg == REG_FAULT || reg == REG_CH_FAULT) {
@@ -491,7 +584,11 @@ bool isDefinedReadOffset(uint8_t reg) {
   if (reg == REG_AS5600_CONF_LO || reg == REG_AS5600_CONF_LO + 1u) {
     return true;
   }
-  if (reg == REG_CH_PRESENT || reg == REG_CH_ENABLE || reg == REG_CMD) {
+  if (reg == REG_CH_PRESENT || reg == REG_CH_ENABLE || reg == REG_CMD ||
+      reg == REG_ZERO_CH_SELECT) {
+    return true;
+  }
+  if (reg >= REG_CH0_ZERO_OFFSET && reg < REG_CH0_ZERO_OFFSET + 2u * kChannelCount) {
     return true;
   }
   return false;
@@ -524,7 +621,8 @@ void materializeRegs(bool consumeDataNew) {
 
   for (uint8_t ch = 0; ch < kChannelCount; ++ch) {
     const bool enabled = ((gConfig.chEnable >> ch) & 0x01u) != 0u;
-    writeLe16(&gRegs.txStaging[REG_CH0_ANGLE + ch * 2u], enabled ? (snap.angle[ch] & 0x0FFFu) : 0xFFFFu);
+    writeLe16(&gRegs.txStaging[REG_CH0_ANGLE + ch * 2u],
+              enabled ? calibratedAngle(snap.angle[ch], ch) : 0xFFFFu);
     gRegs.txStaging[REG_CH0_AGC + ch] = enabled ? snap.agc[ch] : 0xFFu;
   }
 
@@ -539,6 +637,11 @@ void materializeRegs(bool consumeDataNew) {
   gRegs.txStaging[REG_CH_PRESENT] = gChPresent & kChMask;
   gRegs.txStaging[REG_CH_ENABLE] = gConfig.chEnable & kChMask;
   gRegs.txStaging[REG_CMD] = gCmdReadback;
+  gRegs.txStaging[REG_ZERO_CH_SELECT] = gZeroChSelect & kChMask;
+  for (uint8_t ch = 0; ch < kChannelCount; ++ch) {
+    writeLe16(&gRegs.txStaging[REG_CH0_ZERO_OFFSET + ch * 2u],
+              gZeroOffsets[ch].load(std::memory_order_relaxed));
+  }
 }
 
 bool dsWrite(const uint8_t addr, const uint8_t *data, const size_t len, const bool sendStop = true) {
@@ -712,6 +815,51 @@ void applyConfigIfNeeded() {
   gConfig.dirty = false;
 }
 
+uint8_t executeZeroCommand(uint8_t command, uint8_t selectedMask) {
+  const uint8_t mask = selectedMask & kChMask;
+  if (mask == 0u) {
+    setFault(FAULT_CFG_REJECT);
+    return CMD_FAIL;
+  }
+
+  const SensorSnapshot snap = snapshotNow();
+  uint16_t previous[kChannelCount]{};
+  uint8_t appliedMask = 0u;
+  bool partialFailure = false;
+
+  for (uint8_t ch = 0; ch < kChannelCount; ++ch) {
+    const uint8_t bit = static_cast<uint8_t>(1u << ch);
+    if ((mask & bit) == 0u) {
+      continue;
+    }
+    previous[ch] = gZeroOffsets[ch].load(std::memory_order_relaxed);
+    if (command == CMD_ZERO_SET &&
+        (((gConfig.chEnable & bit) == 0u) || ((snap.chOkMask & bit) == 0u))) {
+      partialFailure = true;
+      continue;
+    }
+    const uint16_t value = command == CMD_ZERO_SET ? (snap.rawAngle[ch] & 0x0FFFu) : 0u;
+    gZeroOffsets[ch].store(value, std::memory_order_relaxed);
+    appliedMask |= bit;
+  }
+
+  if (appliedMask != 0u && !saveZeroOffsets()) {
+    for (uint8_t ch = 0; ch < kChannelCount; ++ch) {
+      if ((appliedMask & (1u << ch)) != 0u) {
+        gZeroOffsets[ch].store(previous[ch], std::memory_order_relaxed);
+      }
+    }
+    setFault(FAULT_CFG_REJECT);
+    return CMD_FAIL;
+  }
+
+  if (partialFailure) {
+    setFault(FAULT_CFG_REJECT);
+    return CMD_FAIL;
+  }
+  return CMD_IDLE;
+}
+
 void executeMailboxCommand() {
   if (gMailbox.reqSeq == gMailbox.ackSeq) {
     return;
@@ -729,6 +877,12 @@ void executeMailboxCommand() {
       gDownstreamStats.rescans += 1u;
       (void)applyConfToPresent(gChPresent & kChMask, gConfig.as5600Conf);
       gCmdReadback = CMD_IDLE;
+      break;
+    case CMD_ZERO_SET:
+    case CMD_ZERO_CLEAR:
+      gCmdReadback = executeZeroCommand(gMailbox.reqCmd, gMailbox.reqZeroMask);
+      gMailbox.lastZeroResult = gCmdReadback;
+      gMailbox.lastZeroSeq = gMailbox.reqSeq;
       break;
     default:
       setFault(FAULT_CFG_REJECT);
@@ -794,17 +948,20 @@ void sampleOnce() {
   for (uint8_t ch = 0; ch < kChannelCount; ++ch) {
     if (((gConfig.chEnable >> ch) & 0x01u) == 0u) {
       next.angle[ch] = 0xFFFFu;
+      next.rawAngle[ch] = 0xFFFFu;
       next.agc[ch] = 0xFFu;
       next.magnetStatus[ch] = 0u;
       gSampler.failureStreak[ch] = 0u;
       continue;
     }
 
+    uint16_t rawAngle = 0u;
     uint16_t angle = 0u;
     uint8_t statusReg = 0u;
     uint8_t agc = next.agc[ch];
 
-    if (!muxSelect(ch) || !as5600ReadAngle(gConfig.angleSrc, angle)) {
+    if (!muxSelect(ch) || !as5600ReadAngle(0u, rawAngle) ||
+        (gConfig.angleSrc != 0u && !as5600ReadAngle(1u, angle))) {
       setChFault(ch);
       gChannelDiagnostics[ch].readFailures += 1u;
       gChannelDiagnostics[ch].lastFailureMs = millis();
@@ -819,7 +976,8 @@ void sampleOnce() {
       continue;
     }
 
-    next.angle[ch] = angle;
+    next.rawAngle[ch] = rawAngle;
+    next.angle[ch] = gConfig.angleSrc == 0u ? rawAngle : angle;
 
     if (readStatusAgc) {
       if (!as5600ReadStatusAgc(statusReg, agc)) {
@@ -891,6 +1049,21 @@ void sampleOnce() {
 }
 
 void processRegisterWrite(uint8_t reg, uint8_t value, WriteResult &result) {
+  if (reg >= REG_CH0_ZERO_OFFSET && reg < REG_CH0_ZERO_OFFSET + 2u * kChannelCount) {
+    const uint8_t relative = static_cast<uint8_t>(reg - REG_CH0_ZERO_OFFSET);
+    const uint8_t ch = relative / 2u;
+    uint16_t candidate = gZeroOffsets[ch].load(std::memory_order_relaxed);
+    if ((relative & 0x01u) == 0u) {
+      candidate = static_cast<uint16_t>((candidate & 0x0F00u) | value);
+    } else {
+      candidate = static_cast<uint16_t>((candidate & 0x00FFu) |
+                                        ((static_cast<uint16_t>(value) & 0x0Fu) << 8u));
+    }
+    gZeroOffsets[ch].store(candidate, std::memory_order_relaxed);
+    gZeroPersistenceDirty.store(true, std::memory_order_release);
+    return;
+  }
+
   switch (reg) {
     case REG_CONFIG:
       if ((value & 0xFEu) != 0u) {
@@ -948,6 +1121,13 @@ void processRegisterWrite(uint8_t reg, uint8_t value, WriteResult &result) {
         gConfig.dirty = true;
       }
       break;
+    case REG_ZERO_CH_SELECT:
+      if ((value & 0xC0u) != 0u) {
+        setFault(FAULT_CFG_REJECT);
+      } else {
+        gZeroChSelect = value & kChMask;
+      }
+      break;
     case REG_CMD:
       if (gCmdReadback == CMD_BUSY) {
         setFault(FAULT_CFG_REJECT);
@@ -963,8 +1143,11 @@ void processRegisterWrite(uint8_t reg, uint8_t value, WriteResult &result) {
           break;
         case CMD_MUX_RESET:
         case CMD_RESCAN:
+        case CMD_ZERO_SET:
+        case CMD_ZERO_CLEAR:
           result.dispatchCmd = true;
           result.cmdOpcode = value;
+          result.zeroMask = gZeroChSelect & kChMask;
           gCmdReadback = CMD_BUSY;
           break;
         case CMD_SOFT_RESET:
@@ -991,6 +1174,7 @@ void applyWriteResult(const WriteResult &result) {
   }
   if (result.dispatchCmd) {
     gMailbox.reqCmd = result.cmdOpcode;
+    gMailbox.reqZeroMask = result.zeroMask;
     std::atomic_thread_fence(std::memory_order_seq_cst);
     gMailbox.reqSeq = gMailbox.reqSeq + 1u;
   }
@@ -1065,6 +1249,7 @@ void initSharedState() {
   gConfig.dirConfig = 0u;
   gConfig.chEnable = 0u;
   gConfig.dirty = false;
+  gZeroChSelect = 0u;
 
   gStatus = {};
   if (watchdog_enable_caused_reboot()) {
@@ -1201,10 +1386,11 @@ void printChannels() {
   const uint8_t present = gChPresent & kChMask;
   const uint8_t enabled = gConfig.chEnable & kChMask;
   const uint8_t ok = snap.chOkMask & kChMask;
-  Serial.println("CH PRESENT ENABLE OK DIR_CFG DIR_OUT ANGLE DEGREE  AGC MAG_RAW MD ML MH READ_OK READ_ERR LAST_OK_MS LAST_ERR_MS");
+  Serial.println("CH PRESENT ENABLE OK DIR_CFG DIR_OUT ANGLE DEGREE  ZERO_OFF AGC MAG_RAW MD ML MH READ_OK READ_ERR LAST_OK_MS LAST_ERR_MS");
   for (uint8_t ch = 0; ch < kChannelCount; ++ch) {
     const uint8_t bit = static_cast<uint8_t>(1u << ch);
-    const uint16_t angle = snap.angle[ch];
+    const uint16_t zeroOffset = gZeroOffsets[ch].load(std::memory_order_relaxed);
+    const uint16_t angle = (enabled & bit) != 0u ? calibratedAngle(snap.angle[ch], ch) : 0xFFFFu;
     const uint32_t milliDegrees = angle == 0xFFFFu ? 0u : (static_cast<uint32_t>(angle) * 360000u) / 4096u;
     const uint8_t magnet = snap.magnetStatus[ch];
     const uint8_t dirPin = kDirPins[ch];
@@ -1212,19 +1398,38 @@ void printChannels() {
                   ch, (present & bit) != 0u, (enabled & bit) != 0u, (ok & bit) != 0u,
                   (gConfig.dirConfig & bit) != 0u, digitalRead(dirPin) != 0);
     if (angle == 0xFFFFu) {
-      Serial.print("invalid  invalid   ");
+      Serial.print("invalid  invalid  ");
     } else {
       Serial.printf("%4u   %3lu.%03lu ", angle,
                     static_cast<unsigned long>(milliDegrees / 1000u),
                     static_cast<unsigned long>(milliDegrees % 1000u));
     }
-    Serial.printf("%3u  0x%02X    %u  %u  %u  %lu %lu %lu %lu\r\n", snap.agc[ch], magnet,
+    Serial.printf("%4u     %3u  0x%02X    %u  %u  %u  %lu %lu %lu %lu\r\n",
+                  zeroOffset, snap.agc[ch], magnet,
                   (magnet & 0x20u) != 0u, (magnet & 0x10u) != 0u, (magnet & 0x08u) != 0u,
                   static_cast<unsigned long>(gChannelDiagnostics[ch].readSuccesses),
                   static_cast<unsigned long>(gChannelDiagnostics[ch].readFailures),
                   static_cast<unsigned long>(gChannelDiagnostics[ch].lastSuccessMs),
                   static_cast<unsigned long>(gChannelDiagnostics[ch].lastFailureMs));
   }
+}
+
+void printChannelAngle(uint8_t channel) {
+  const uint8_t bit = static_cast<uint8_t>(1u << channel);
+  if ((gConfig.chEnable & bit) == 0u) {
+    Serial.println("ERR channel disabled");
+    return;
+  }
+
+  const SensorSnapshot snap = snapshotNow();
+  const uint16_t angle = calibratedAngle(snap.angle[channel], channel);
+  const uint16_t zeroOffset = gZeroOffsets[channel].load(std::memory_order_relaxed);
+  const uint32_t milliDegrees =
+      angle == 0xFFFFu ? 0u : (static_cast<uint32_t>(angle) * 360000u) / 4096u;
+  Serial.printf("OK ch=%u ok=%u raw=%04u deg=%lu.%03lu zero_offset=%u\r\n",
+                channel, (snap.chOkMask & bit) != 0u, angle,
+                static_cast<unsigned long>(milliDegrees / 1000u),
+                static_cast<unsigned long>(milliDegrees % 1000u), zeroOffset);
 }
 
 void printConfig() {
@@ -1313,17 +1518,47 @@ void printUpstreamLog(uint32_t requested) {
   }
 }
 
-bool queueBridgeCommand(uint8_t command) {
+bool queueBridgeCommand(uint8_t command, uint8_t zeroMask = 0u, bool announceQueued = true) {
   if (gCmdReadback == CMD_BUSY) {
     Serial.println("ERR bridge command busy");
     return false;
   }
   gCmdReadback = CMD_BUSY;
   gMailbox.reqCmd = command;
+  gMailbox.reqZeroMask = zeroMask & kChMask;
   std::atomic_thread_fence(std::memory_order_seq_cst);
   gMailbox.reqSeq = gMailbox.reqSeq + 1u;
-  Serial.println("OK command queued");
+  if (announceQueued) {
+    Serial.println("OK command queued");
+  }
   return true;
+}
+
+void serviceZeroCommandResult() {
+  const uint32_t pending = gConsole.pendingZeroSequence;
+  if (pending == 0u || gMailbox.lastZeroSeq != pending) {
+    return;
+  }
+  std::atomic_thread_fence(std::memory_order_acquire);
+  const uint8_t channel = gConsole.pendingZeroChannel;
+  if (gMailbox.lastZeroResult == CMD_IDLE) {
+    Serial.printf("OK zero_offset=%u\r\n",
+                  gZeroOffsets[channel].load(std::memory_order_relaxed));
+  } else {
+    Serial.printf("ERR ch%u zero %s failed\r\n", channel,
+                  gConsole.pendingZeroCommand == CMD_ZERO_SET ? "set" : "clear");
+  }
+  gConsole.pendingZeroSequence = 0u;
+}
+
+void serviceZeroPersistence() {
+  if (!gZeroPersistenceDirty.exchange(false, std::memory_order_acq_rel)) {
+    return;
+  }
+  if (!saveZeroOffsets()) {
+    setFault(FAULT_CFG_REJECT);
+    gZeroPersistenceDirty.store(true, std::memory_order_release);
+  }
 }
 
 bool queueDiagRequest(DiagRequestType type, uint8_t channel, uint8_t reg,
@@ -1388,6 +1623,8 @@ void printHelp() {
   Serial.println("  mux reset                    reset TCA9548A");
   Serial.println("  ch <0..5> enable|disable     change sampling enable mask");
   Serial.println("  ch <0..5> dir <0|1>          set and immediately apply DIR output");
+  Serial.println("  ch <0..5> angle              show calibrated angle for one channel");
+  Serial.println("  ch <0..5> zero set|clear     set current RAW angle as zero / clear zero");
   Serial.println("  ch <0..5> read <reg> [len]   raw AS5600 register read, len 1..8");
   Serial.println("  ch <0..5> write <reg> <b..>  raw AS5600 write, 1..8 bytes (0xFF blocked)");
   Serial.println("  reboot                       watchdog reboot");
@@ -1479,7 +1716,7 @@ void executeConsoleCommand(char *line) {
   } else if (strcmp(argv[0], "ch") == 0) {
     uint32_t channelValue;
     if (argc < 3u || !parseUnsigned(argv[1], kChannelCount - 1u, channelValue)) {
-      Serial.println("ERR usage: ch <0..5> enable|disable|dir|read|write ...");
+      Serial.println("ERR usage: ch <0..5> enable|disable|dir|angle|zero|read|write ...");
       return;
     }
     const uint8_t channel = static_cast<uint8_t>(channelValue);
@@ -1508,6 +1745,26 @@ void executeConsoleCommand(char *line) {
         gConfig.dirty = true;
         Serial.printf("OK ch%u dir=%lu output=%u\r\n", channel,
                       static_cast<unsigned long>(direction), digitalRead(kDirPins[channel]) != 0);
+      }
+    } else if (strcmp(argv[2], "angle") == 0) {
+      if (argc != 3u) {
+        Serial.println("ERR usage: ch <0..5> angle");
+      } else {
+        printChannelAngle(channel);
+      }
+    } else if (strcmp(argv[2], "zero") == 0) {
+      if (argc != 4u || (strcmp(argv[3], "set") != 0 && strcmp(argv[3], "clear") != 0)) {
+        Serial.println("ERR usage: ch <0..5> zero set|clear");
+      } else if (gConsole.pendingZeroSequence != 0u) {
+        Serial.println("ERR bridge command busy");
+      } else {
+        const uint8_t command = strcmp(argv[3], "set") == 0 ? CMD_ZERO_SET : CMD_ZERO_CLEAR;
+        gZeroChSelect = bit;
+        if (queueBridgeCommand(command, bit, false)) {
+          gConsole.pendingZeroSequence = gMailbox.reqSeq;
+          gConsole.pendingZeroChannel = channel;
+          gConsole.pendingZeroCommand = command;
+        }
       }
     } else if (strcmp(argv[2], "read") == 0) {
       uint32_t reg;
@@ -1545,7 +1802,7 @@ void executeConsoleCommand(char *line) {
                          static_cast<uint8_t>(dataLength));
       }
     } else {
-      Serial.println("ERR usage: ch <0..5> enable|disable|dir|read|write ...");
+      Serial.println("ERR usage: ch <0..5> enable|disable|dir|angle|zero|read|write ...");
     }
   } else {
     Serial.println("ERR unknown command; type help");
@@ -1599,8 +1856,8 @@ void serviceMonitor() {
 void setup() {
 #if MULTI_I2C_BRIDGE_USB_CONSOLE
   Serial.begin(115200);
-  loadBridgeIdentity();
 #endif
+  initPersistentStorage();
   initSharedState();
   initStatusLeds();
   bootstrapHardware();
@@ -1614,8 +1871,10 @@ void loop() {
 #if MULTI_I2C_BRIDGE_USB_CONSOLE
   pollConsole();
   serviceDiagResult();
+  serviceZeroCommandResult();
   serviceMonitor();
 #endif
+  serviceZeroPersistence();
   serviceStatusLeds();
   gCore0Alive = true;
   if (gCore0Alive && gCore1Alive) {

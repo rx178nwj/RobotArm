@@ -1,4 +1,4 @@
-import type { BridgeStatus, ChannelData, MasterStats } from "../../shared/types";
+import type { BridgeConfig, BridgeStatus, ChannelData, MasterStats } from "../../shared/types";
 
 export interface BridgeIdentity {
   product: string;
@@ -16,6 +16,21 @@ function fields(line: string): Record<string, string> {
 }
 
 const num = (value: string | undefined): number => value ? Number(value) : 0;
+
+export function parseConfig(line: string): BridgeConfig | null {
+  if (!line.startsWith("CONFIG ")) return null;
+  const f = fields(line);
+  if (!f.angle_src) return null;
+  return {
+    angleSrc: f.angle_src,
+    pollPeriodMs: num(f.poll_period_ms),
+    statusDecim: num(f.status_decim),
+    as5600Conf: num(f.as5600_conf),
+    chEnable: num(f.ch_enable),
+    dirConfig: num(f.dir_config),
+    dirApplied: num(f.dir_applied)
+  };
+}
 
 export function parseIdentity(line: string): BridgeIdentity | null {
   if (!line.startsWith("IDENTITY ")) return null;

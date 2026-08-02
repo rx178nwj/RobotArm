@@ -2,23 +2,74 @@
   "name": "robot-arm-monitor",
   "version": "0.1.0",
   "private": true,
-  "description": "RobotArm2 integrated monitor (Phase 3)",
+  "description": "RobotArm2 bridge monitoring desktop application",
+  "author": "RobotArm2 Project",
   "main": "dist/main/main.js",
   "scripts": {
     "build": "tsc && node scripts/copy-static.mjs && node scripts/verify-renderer.mjs",
+    "build:icon": "set ELECTRON_RUN_AS_NODE=&& electron scripts/generate-icon.cjs",
     "start": "npm run build && electron .",
     "dev": "npm run build && electron .",
+    "dist": "npm run build && electron-builder",
     "test:phase2": "npm run build && set ELECTRON_RUN_AS_NODE=&& electron test/phase2-smoke.cjs",
-    "test:phase3": "npm run build && node test/phase3-smoke.cjs"
+    "test:phase3": "npm run build && node test/phase3-smoke.cjs",
+    "test:phase4": "npm run build && node test/phase4-smoke.cjs",
+    "test:phase6": "npm run build && set ELECTRON_RUN_AS_NODE=&& electron test/phase6-smoke.cjs",
+    "test:phase7": "npm run build && node test/phase7-smoke.cjs",
+    "test:phase8": "npm run build && node test/phase8-smoke.cjs",
+    "test:phase9": "npm run build && node test/phase9-smoke.cjs"
   },
   "dependencies": {
     "@serialport/parser-readline": "^13.0.0",
+    "@stoprocent/noble": "^2.5.9",
     "electron-store": "8.2.0",
-    "serialport": "^13.0.0"
+    "serialport": "^13.0.0",
+    "uplot": "^1.6.32"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
     "electron": "^43.2.0",
+    "electron-builder": "^26.15.3",
     "typescript": "^5.8.3"
+  },
+  "build": {
+    "appId": "com.robotarm2.monitor",
+    "productName": "Robot Arm Monitor",
+    "asar": true,
+    "npmRebuild": false,
+    "directories": {
+      "buildResources": "build",
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "node_modules/**/*",
+      "package.json",
+      "!**/*.map",
+      "!**/*.ts",
+      "!**/test{,s}/**/*",
+      "!**/docs/**/*"
+    ],
+    "asarUnpack": [
+      "node_modules/@serialport/bindings-cpp/**/*",
+      "node_modules/@stoprocent/noble/prebuilds/**/*"
+    ],
+    "win": {
+      "executableName": "RobotArmMonitor",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "Robot-Arm-Monitor-Setup-${version}.${ext}"
+    }
   }
 }

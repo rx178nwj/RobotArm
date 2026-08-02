@@ -1,4 +1,4 @@
-# コントローラ ⇔ ブリッジ間 コマンド仕様書
+﻿# コントローラ ⇔ ブリッジ間 コマンド仕様書
 
 上流I2Cバス（Controller ⇔ RP2040ブリッジ, 0x42）の**コマンド／レジスタインタフェース確定仕様**。
 コントローラ側ドライバ実装者は本書のみでブリッジを制御できることを目標とする。
@@ -7,10 +7,12 @@
 |------|------|
 | 対象 | 上流I2Cバス（Host ⇔ Bridge, スレーブ 0x42） |
 | 関連 | [controller_impl_notes.md](controller_impl_notes.md)（**実装注意点・未確定事項／他システム構築時 必読**） / [i2c_architecture.md](i2c_architecture.md)（通信アーキ） / [design_spec.md](design_spec.md) §5（HW/レジスタ） / [software_architecture.md](software_architecture.md)（FW構造） |
-| 版 | 1.0（3ch初版0.1→6ch実装により major bump） |
-| 作成日 | 2026-07-10（初版）／2026-07-19 改訂（6ch化） |
+| 版 | 1.1（0位置設定レジスタ追加, §4.10） |
+| 作成日 | 2026-07-10（初版）／2026-07-19 改訂（6ch化）／2026-08-01 改訂（0位置設定レジスタ追加） |
 
 > **6ch化に伴う後方非互換変更（v1.0）**：`STATUS` は1バイトに6ch分のch別ビット＋既存フラグ（DEGRADED/DATA_NEW/MUX_FAULT/ERR）が収まらないため **2バイト(STATUS_LO/HI)化**した。FAULTのch別COMMビットは別レジスタ`CH_FAULT`(1バイト, ch0-5で収まる)に分離した。角度/AGCブロックがch3-5分拡張されオフセットが再配置されているため、**v0.x(3ch)ドライバとの互換性は無い**（§9）。
+>
+> **0位置設定の追加（v1.1、後方互換）**：磁石取付誤差を補正するch毎0位置オフセット機能（[design_spec.md](design_spec.md) §5.5）のため、予約領域に `ZERO_CH_SELECT`(0x52)・`CHn_ZERO_OFFSET`(0x60–0x6B) を追加し、`CMD`に`ZERO_SET`/`ZERO_CLEAR`を追加する（§4.10、§7.1）。既定オフセット=0では`CHn_ANGLE`の出力はv1.0と完全に同一のため、既存オフセットのみを使う既存ドライバへの影響はない（追加のみ、minor bump）。Arduino版ファームウェアの`VERSION`は0x11。
 
 > **本書と関連文書の役割分担**：トランザクションの成立性・タイミング根拠は [i2c_architecture.md](i2c_architecture.md)、HW配線・電気仕様は [design_spec.md](design_spec.md)、FW内部構造は [software_architecture.md](software_architecture.md)。本書は**上流バス上を流れるバイト列（コマンド）の確定仕様**に特化する。
 
@@ -79,14 +81,14 @@ S [0x42|R] A [d0] A [d1] A ... N P
 
 ---
 
-## 3. レジスタマップ（完全版・確定, 6ch/v1.0）
+## 3. レジスタマップ（完全版・確定, 6ch/v1.1）
 
 全オフセットの一覧。未定義オフセットの読みは **0xFF**、書きは**無視**。多バイト値は **LE**。
 
 | Off | 名称 | R/W | Byte | リセット値 | 概要 |
 |-----|------|-----|------|-----------|------|
 | 0x00 | `WHO_AM_I` | R | 1 | 0xB6 | デバイスID（固定） |
-| 0x01 | `VERSION` | R | 1 | 0x10 | FWバージョン（上位4bit=major / 下位4bit=minor, §9.1）。6ch版=v1.0 |
+| 0x01 | `VERSION` | R | 1 | 0x11 | FWバージョン（上位4bit=major / 下位4bit=minor, §9.1）。0位置対応6ch版=v1.1 |
 | 0x02 | `STATUS_LO` | R | 1 | 0x00 | ch0-5 磁石検出OK（§4.1） |
 | 0x03 | `STATUS_HI` | R | 1 | 0x00 | DEGRADED/DATA_NEW/MUX_FAULT/ERR（§4.1） |
 | 0x04 | `FAULT` | R | 1 | 0x00 | ラッチ式エラー詳細（mux/バス系）。`CMD=CLEAR_FAULT`でクリア（§4.2） |
@@ -120,7 +122,16 @@ S [0x42|R] A [d0] A [d1] A ... N P
 | 0x47 | `CH_ENABLE` | R/W | 1 | (起動検出値) | ch0-5 有効ch選択マスク（§4.9） |
 | 0x48–0x4F | reserved | R | — | 0xFF | 予約（読みは0xFF・書込は`CFG_REJECT`） |
 | 0x50 | `CMD` | R/W | 1 | 0x00 | コマンド発行／実行結果（§7） |
-| 0x51– | reserved | — | — | 0xFF | 予約 |
+| 0x51 | reserved | R | — | 0xFF | 予約 |
+| 0x52 | `ZERO_CH_SELECT` | R/W | 1 | 0x00 | 0位置設定/クリア対象chマスク。bit0-5=ch0-5（§4.10） |
+| 0x53–0x5F | reserved | R | — | 0xFF | 予約 |
+| 0x60 | `CH0_ZERO_OFFSET` | R/W | 2 | 0x0000 | ch0 0位置オフセット 12bit（LE, §4.10） |
+| 0x62 | `CH1_ZERO_OFFSET` | R/W | 2 | 0x0000 | ch1 0位置オフセット |
+| 0x64 | `CH2_ZERO_OFFSET` | R/W | 2 | 0x0000 | ch2 0位置オフセット |
+| 0x66 | `CH3_ZERO_OFFSET` | R/W | 2 | 0x0000 | ch3 0位置オフセット |
+| 0x68 | `CH4_ZERO_OFFSET` | R/W | 2 | 0x0000 | ch4 0位置オフセット |
+| 0x6A | `CH5_ZERO_OFFSET` | R/W | 2 | 0x0000 | ch5 0位置オフセット |
+| 0x6C– | reserved | — | — | 0xFF | 予約 |
 
 ### 3.1 高速読み出しブロック（ホットパス）
 
@@ -282,6 +293,44 @@ AS5600 の CONF レジスタ（16bit）をそのまま公開し、上位から S
 - **拒否**：`0x00`（有効ch皆無）および bit7:6 が非0の書込は無効値として反映せず `FAULT.CFG_REJECT`。
 - `CMD=RESCAN` は `CH_PRESENT` を更新するが `CH_ENABLE` は変更しない（上位の明示設定を保持）。新規検出chを使うには上位が `CH_PRESENT` を読み `CH_ENABLE` を再設定する。
 
+### 4.10 `ZERO_CH_SELECT`（0x52, R/W）／`CHn_ZERO_OFFSET`（0x60–0x6B, R/W）
+
+磁石の機械的な取付位置誤差を補正するための、ch毎0位置オフセット機構（[design_spec.md](design_spec.md) §5.5, 要件ID ZERO-01〜07）。EEPROMエミュレーション領域へ永続化される点は `identity`（§4.9とは別系統、[design_spec.md](design_spec.md) §5.4 USB-ID-03）と同じ運用方針を踏襲する。
+
+**`ZERO_CH_SELECT`（0x52, R/W, 1byte）** — `CMD=ZERO_SET`/`CMD=ZERO_CLEAR`（§7.1）の適用対象chマスク
+
+| bit | 意味 |
+|-----|------|
+| 0 | ch0 を対象にする |
+| 1 | ch1 同上 |
+| 2 | ch2 同上 |
+| 3 | ch3 同上 |
+| 4 | ch4 同上 |
+| 5 | ch5 同上 |
+| 7:6 | 0固定（非0の書込は`FAULT.CFG_REJECT`） |
+
+- `CMD`書込前に対象chをここへ設定する（`DIR_CONFIG`/`CH_ENABLE`と同じ「設定レジスタ→CMD発行」の2段手順）。複数bitを立てて一括対象にできる。
+- `0x00`（対象ch皆無）での`CMD=ZERO_SET`/`ZERO_CLEAR`発行は無効値として`FAULT.CFG_REJECT`。
+
+**`CHn_ZERO_OFFSET`（0x60–0x6B, R/W, 2byte ×6ch, LE, 12bit）** — ch毎に適用中の0位置オフセット
+
+- 読み出しは現在有効なオフセット値（EEPROMから復元済みの値、または最後に`ZERO_SET`で設定した値）を返す。
+- 直接書込も許可する（製造時の一括プロビジョニング用）。書込値は0-4095の範囲外ビット（bit15:12）は無視し、即座に適用かつEEPROMへ保存する。他レジスタと異なり次巡反映ではなく即時反映とする（角度較正は次回サンプルから正しい値を返す必要があるため）。
+- **保存タイミング**：`CMD=ZERO_SET`/`ZERO_CLEAR`実行時、および本レジスタへの直接書込時、対象chのオフセットをEEPROMエミュレーション領域へ都度書き込む。フラッシュ書込回数を抑えるため、同一値への再書込（無変化）はスキップしてよい。
+
+**`CMD=ZERO_SET`（0x50=0x10, §7.1）** — 0位置設定（現在位置を0degにする）
+
+1. `ZERO_CH_SELECT`で対象chビットマスクを設定する。
+2. `CMD`へ`0x10`（`ZERO_SET`）を書き込む。
+3. Core1が対象chそれぞれについて、直近サンプル済みの`raw_angle`をそのまま新たな`CHn_ZERO_OFFSET`として採用し、EEPROMへ保存する（busy完了）。
+4. 対象chが**無効（`CH_ENABLE`該当bit=0）または無応答（`STATUS_LO.CHn_OK`=0）**の場合、そのchはオフセットを変更せず処理をスキップし、コマンド全体を失敗として扱う（`FAULT.CFG_REJECT`、`CMD`読み値は`0xFF`）。一部chのみ失敗した場合も、成功したchのオフセットはロールバックしない（部分適用）。
+5. 実行直後の数サンプルは過渡（オフセット切替直後）となるため、上位は破棄して再取得すること（§4.6 DIR切替時と同様の運用）。
+
+**`CMD=ZERO_CLEAR`（0x50=0x11, §7.1）** — 0位置クリア（較正を無効化しRAW_ANGLEそのままへ戻す）
+
+- `ZERO_CH_SELECT`で指定した対象chの`CHn_ZERO_OFFSET`を`0`にリセットし、EEPROMへ保存する。
+- 対象ch選択・busy完了・部分失敗時の扱いは`ZERO_SET`と同様。無効ch/無応答chでもクリア自体は許可する（既定値へ戻すだけのため、原則失敗しない）。
+
 ---
 
 ## 5. 角度データ形式
@@ -306,8 +355,9 @@ angle &= 0x0FFF;                    // 12bit マスク（上位nibbleは常に0�
 ### 5.2 スケーリング
 
 - 値域 0–4095（12bit）が機械角 0–360°（既定 RAW_ANGLE, 未加工生位置）に対応。
-- **角度範囲・オフセット・単位変換・方向正規化は上位で実施**（ブリッジは生位置を転送）。DIRによる増加方向は §4.6。
+- **角度範囲・単位変換・方向正規化は上位で実施**（ブリッジは生位置を転送）。DIRによる増加方向は §4.6。
 - `deg = raw * 360.0 / 4096.0`。
+- **例外（磁石取付誤差の較正のみ）**：`CHn_ANGLE`（本節, ホットパス出力）は下流生値そのものではなく、ch毎の `CHn_ZERO_OFFSET`（§4.10）を差し引いた相対値を返す。`CHn_ANGLE = (raw_angle − zero_offset[ch] + 4096) mod 4096`。既定オフセット=0では従来どおり生値と一致する（後方互換）。オフセット適用前の生値そのものが必要な場合は、USBシリアル`ch read`（[usb_serial_spec.md](usb_serial_spec.md) §6.1）でAS5600のRAW_ANGLE(0x0C/0x0D)へ直接アクセスすること。
 
 ### 5.3 スナップショットミラー（0x1C / 0x1D / 0x1E）
 
@@ -354,6 +404,8 @@ angle &= 0x0FFF;                    // 12bit マスク（上位nibbleは常に0�
 | 0x01 | `CLEAR_FAULT` | `FAULT`/`CH_FAULT` 全ビットと `STATUS_HI.ERR` をクリア | 即時 |
 | 0x02 | `MUX_RESET` | TCA9548A を RESET パルス→再初期化 | busy（下流処理） |
 | 0x03 | `RESCAN` | 下流プローブ再実行（mux/各AS5600応答確認） | busy（下流処理） |
+| 0x10 | `ZERO_SET` | `ZERO_CH_SELECT`で指定したchの現在位置を新たな0位置オフセットとして設定・EEPROM保存（§4.10） | busy（EEPROM書込） |
+| 0x11 | `ZERO_CLEAR` | `ZERO_CH_SELECT`で指定したchの0位置オフセットを0へリセット・EEPROM保存（§4.10） | busy（EEPROM書込） |
 | 0xA5 | `SOFT_RESET` | FWをWDT経由で再起動（角度は再取得。数十ms応答断） | 応答断→再起動 |
 
 - **完了種別「即時」**：発行後ただちに完了。`CMD` 読み値は即 idle(0x00)/失敗(0xFF)。
@@ -460,6 +512,24 @@ S 84 A  10 A  Sr 85 A  [a0L a0H a1L a1H a2L a2H FF FF FF FF FF FF slo shi scnt] 
 
 ---
 
+### 8.7 0位置設定（例：ch1を現在位置で0degにする）
+
+```
+S 84 A  52 A  02 A  P     ← ptr=0x52(ZERO_CH_SELECT), data=0x02 (bit1=ch1のみ対象)
+S 84 A  50 A  10 A  P     ← CMD=ZERO_SET
+（その後 CMD(0x50) を idle(0x00) になるまでポーリング。0xFFなら失敗＝ch1が無効/無応答）
+S 84 A  62 A  Sr 85 A [o0L o0H] N P   ← ptr=0x62(CH1_ZERO_OFFSET) を読み戻し、設定値を確認
+```
+
+較正をやめて生値へ戻す場合：
+
+```
+S 84 A  52 A  02 A  P     ← ZERO_CH_SELECT=0x02（ch1）
+S 84 A  50 A  11 A  P     ← CMD=ZERO_CLEAR
+```
+
+---
+
 ## 9. バージョニング・互換性
 
 - `WHO_AM_I`(0xB6) と `VERSION` で上位はデバイス種別／世代を判別。
@@ -476,7 +546,7 @@ VERSION = (major << 4) | minor
   minor =  VERSION       & 0x0F   // 0–15：後方互換の範囲での機能追加/修正
 ```
 
-- **3ch初版FW = `0x01`**（major=0 / minor=1）。**6ch版FW = `0x10`**（major=1 / minor=0, 本書で規定するレジスタマップ再配置に対応）。表記は `v<major>.<minor>`。
+- **3ch初版FW = `0x01`**（major=0 / minor=1）。**6ch初版FW = `0x10`**（major=1 / minor=0, レジスタマップ再配置に対応）。**0位置対応6ch版FW = `0x11`**（major=1 / minor=1, 後方互換の追加）。表記は `v<major>.<minor>`。
 - **major を上げる契機**：既存オフセットの意味変更・削除、レジスタ再配置、トランザクション形式変更など**後方互換を壊す変更**。予約領域へのレジスタ追加のみなら minor を上げる。
 
 ### 9.2 上位（controller）の互換性チェック（確定）
@@ -506,14 +576,16 @@ if ((v & 0x0F) != EXPECTED_MINOR) // minor 差異 → 警告のみで継続（�
 - [x] `POLL_PERIOD=0` を全力巡回（既定）と定義し [i2c_architecture.md](i2c_architecture.md) の決定に整合（§4.5）。
 - [x] 起動契約：上流スレーブ(0x42)は**遅延有効化**（下流プローブ・CONF書込完了後）。**電源投入後 ≤100ms** で応答開始、応答＝データ有効（§8.2）。
 - [x] `CONFIG.bit0` の数値表現と FW `config.angle_src` の整合（**0=RAW/1=ANGLE で統一・既定 RAW_ANGLE**。§4.4）。
-- [x] `VERSION` エンコード＝**4bit major / 4bit minor** で確定。3ch初版=`0x01`、6ch版=`0x10`。上位は**major一致を要求**（minor差異は警告のみ継続, §9.1/§9.2）。
+- [x] `VERSION` エンコード＝**4bit major / 4bit minor** で確定。3ch初版=`0x01`、6ch初版=`0x10`、0位置対応6ch版=`0x11`。上位は**major一致を要求**（minor差異は警告のみ継続, §9.1/§9.2）。
 - [x] 接続ch数（1〜6ch）対応（§4.9/§5.4/§11）：**起動時自動検出（`CH_PRESENT` 0x46）＋上位上書き（`CH_ENABLE` 0x47）**の二層で確定。無効chは巡回スキップ・角度`0xFFFF`/AGC`0xFF`・DEGRADED対象外。**有効なのに無応答は故障（DEGRADED＋`CH_FAULT.CHn_COMM`）**。既定`CH_ENABLE`＝起動検出値で、配線どおりなら無設定で正常起動。
+- [x] 0位置設定（§4.10）：`ZERO_CH_SELECT`(0x52)/`CHn_ZERO_OFFSET`(0x60–0x6B)/`CMD=ZERO_SET(0x10)`/`CMD=ZERO_CLEAR(0x11)`で確定。`CHn_ANGLE`へのオフセット適用式・EEPROM永続化・既定オフセット0での後方互換を規定（[design_spec.md](design_spec.md) §5.5）。
 
 ### 実装前に要確認（☐）
 - [ ] `CMD` 各コマンドの実処理時間（`RESCAN`/`MUX_RESET` の busy 継続時間の実測）。
 - [ ] 上位実機（Linux i2c-dev 等）での 0x42 応答・15バイト一括リード疎通（[i2c_architecture.md](i2c_architecture.md) §11.5）。
 - [ ] 起動時 **全ch無応答（0ch検出）** でも 0x42 を有効化し STATUS で通知する方針の是非（§11.4）。上流readyの下限扱いを実機で確定。
 - [ ] ファームウェアの6ch対応実装（現行FWは`kChannelCount=3`のまま。本書のレジスタオフセットへの追従が必要）。
+- [x] 0位置設定（§4.10）のArduino版ファームウェア実装：基板ID直後の独立したmagic/checksum付きEEPROM領域へ格納し、同一値はEEPROMライブラリ側で書込省略。`ZERO_SET`はCore1実行時の最新publish済みRAW_ANGLEを採用（2026-08-01）。
 
 ---
 

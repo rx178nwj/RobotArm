@@ -1,4 +1,4 @@
-# multi_i2c_bridge Arduino Firmware
+﻿# multi_i2c_bridge Arduino Firmware
 
 `arduino-pico` コアで RP2040 向けにビルドする Arduino 版ファームウェアです。
 
@@ -29,7 +29,7 @@
 
 ## レジスタマップ
 
-上流I2C（0x42）のレジスタマップは6ch/v1.0（`VERSION=0x10`）で確定。`STATUS_LO`(0x02)/`STATUS_HI`(0x03)、`FAULT`(0x04)/`CH_FAULT`(0x05)、角度ブロック(0x10-0x1B)、AGCブロック(0x30-0x35)、`CH_PRESENT`(0x46)/`CH_ENABLE`(0x47)、`CMD`(0x50)等の全オフセットは [../docs/command_spec.md](../docs/command_spec.md) §3 を正とする。
+上流I2C（0x42）のレジスタマップは6ch/v1.1（`VERSION=0x11`）。`STATUS_LO`(0x02)/`STATUS_HI`(0x03)、`FAULT`(0x04)/`CH_FAULT`(0x05)、角度ブロック(0x10-0x1B)、AGCブロック(0x30-0x35)、`CH_PRESENT`(0x46)/`CH_ENABLE`(0x47)、`CMD`(0x50)、0位置設定レジスタ(0x52/0x60-0x6B)等の全オフセットは [../docs/command_spec.md](../docs/command_spec.md) §3 を正とする。
 
 ## メモ
 
@@ -63,7 +63,7 @@ USB CDC (`115200 8N1`) にテキストコマンドと改行を送ると、通常
 |---|---|
 | `help` | コマンド一覧 |
 | `status` | STATUS_LO/HI、FAULT/CH_FAULT、接続/有効マスク(6ch)、サンプル数、稼働時間、バス復旧/MUXリセット/再検出回数 |
-| `channels` | 各ch(0-5)の接続、有効、通信OK、DIR設定/実出力、角度、度数、AGC、磁石状態、読取成功/失敗回数と最終時刻 |
+| `channels` | 各ch(0-5)の接続、有効、通信OK、DIR設定/実出力、較正後角度、0位置オフセット、AGC、磁石状態、読取成功/失敗回数と最終時刻 |
 | `config` | 角度ソース、巡回周期、AGC間引き、AS5600 CONF、CH/DIR設定(6ch) |
 | `monitor 1000` / `monitor off` | 指定周期(ms)で `status` と `channels` を継続表示 / 停止 |
 | `identity` / `identity set <16hex>` | Monitorの自動再接続に使う永続基板IDを表示 / 製造時に設定 |
@@ -75,6 +75,8 @@ USB CDC (`115200 8N1`) にテキストコマンドと改行を送ると、通常
 | `mux reset` | TCA9548Aをリセット |
 | `ch N enable` / `ch N disable` | ch N(0-5)の通常巡回を有効 / 無効化（全ch無効は禁止） |
 | `ch N dir 0|1` | ch N(0-5)のDIR出力を設定して即時反映 |
+| `ch N angle` | ch N(0-5)の較正後角度、度数、0位置オフセット、通信OK状態を表示 |
+| `ch N zero set` / `ch N zero clear` | 現在のRAW角度を0位置としてEEPROM保存 / 0位置較正をクリア |
 | `ch N read REG [LEN]` | Core1経由でch N(0-5)のAS5600レジスタを1～8バイト読み出し |
 | `ch N write REG BYTE...` | Core1経由でch N(0-5)のAS5600レジスタへ1～8バイト書き込み |
 | `reboot` | ウォッチドッグ再起動 |
