@@ -304,48 +304,15 @@
         <span id="threshold-state" class="state disconnected">制御アプリ未接続</span>
       </div>
       <p class="control-help">
-        STALL（脱調）・OVERCURRENT（過電流）検知の閾値を調整し、フェールロジックの原因切り分けを行います。
+        STALL（脱調）・OVERCURRENT（過電流）検知の閾値を、SteppingMotorDriver基板ごとにまとめて調整します。
+        実機の基板を見ながら対応する軸を確認できるよう、基板単位で表示しています。
         脱調閾値（STALL_FAULT）は軸ごと・モーション停止中のみ変更可能（動作中は<code>E004</code>で拒否）。
-        過電流閾値（CURRENT_LIMIT）は全軸で単一の電流センサを共有しているため全軸共通の値です。
+        過電流閾値（CURRENT_LIMIT）は基板内の全軸で単一の電流センサを共有しているため基板共通の値です。
         マイクロステップとギア比は「設定」タブに移動しました。
+        「設定」ボタンは即座に基板へ反映されますが、電源断で失われます。恒久的に残すには基板ごとの
+        「基板設定をNVSに保存」ボタンを押してください（この基板の全軸・全設定が一括で保存されます）。
       </p>
-      <div class="threshold-axis-select">
-        <label for="threshold-axis">対象の論理軸</label>
-        <select id="threshold-axis"></select>
-      </div>
-      <div class="threshold-grid">
-        <article class="threshold-card">
-          <h3>脱調フォルト閾値<small>SET/GET STALL_FAULT・軸ごと・microstep単位</small></h3>
-          <dl class="threshold-live">
-            <div><dt>現在の偏差 (diff)</dt><dd id="threshold-live-deviation">—</dd></div>
-            <div><dt>軸状態</dt><dd id="threshold-live-state">—</dd></div>
-          </dl>
-          <div class="threshold-row">
-            <span>現在の設定値</span>
-            <strong id="threshold-stall-current">—</strong>
-            <button id="threshold-stall-refresh">取得</button>
-          </div>
-          <div class="threshold-row">
-            <input id="threshold-stall-input" type="number" step="1" min="0" placeholder="例: 512">
-            <button id="threshold-stall-set">設定</button>
-          </div>
-        </article>
-        <article class="threshold-card">
-          <h3>過電流フォルト閾値<small>SET/GET CURRENT_LIMIT・全軸共通・mA</small></h3>
-          <dl class="threshold-live">
-            <div><dt>現在の電流</dt><dd id="threshold-live-current">—</dd></div>
-          </dl>
-          <div class="threshold-row">
-            <span>現在の設定値</span>
-            <strong id="threshold-current-current">—</strong>
-            <button id="threshold-current-refresh">取得</button>
-          </div>
-          <div class="threshold-row">
-            <input id="threshold-current-input" type="number" step="1" min="0" placeholder="例: 6000">
-            <button id="threshold-current-set">設定</button>
-          </div>
-        </article>
-      </div>
+      <div id="threshold-board-groups" class="board-groups"></div>
       <p id="threshold-message" class="message" aria-live="polite"></p>
     </section>
     </div>
@@ -360,55 +327,14 @@
         <span id="driver-settings-state" class="state disconnected">制御アプリ未接続</span>
       </div>
       <p class="control-help">
-        マイクロステップ（全軸共通）と軸ごとのギア比をここでまとめて設定します。
-        起動時および基板のUSB接続時に現在値を自動取得して反映します。
+        マイクロステップ・ギア比・モーションプロファイルを、SteppingMotorDriver基板ごとにまとめて設定します。
+        実機の基板を見ながら対応する軸を確認できるよう、基板単位で表示しています。
+        マイクロステップは基板内の全軸共通です。起動時および基板のUSB接続時に現在値を自動取得して反映します。
+        「設定」ボタンは即座に基板へ反映されますが、電源断で失われます。恒久的に残すには基板ごとの
+        「基板設定をNVSに保存」ボタンを押してください（この基板の全軸・全設定が一括で保存されます）。
       </p>
-      <div class="threshold-axis-select">
-        <label for="driver-settings-axis">マイクロステップ取得・設定に使う論理軸（適用先は同一基板の全軸）</label>
-        <select id="driver-settings-axis"></select>
-      </div>
-      <article class="threshold-card">
-        <h3>マイクロステップ<small>SET/GET MICROSTEP・全軸共通・分周比</small></h3>
-        <p class="threshold-note">トルクの速度余裕を上げたい場合は分周比を下げます（例: 1/32→1/16）。全軸のモーションが停止中のみ変更可能です。</p>
-        <div class="threshold-row">
-          <span>現在の設定値</span>
-          <strong id="driver-microstep-current">—</strong>
-          <button id="driver-microstep-refresh">取得</button>
-        </div>
-        <div class="threshold-row">
-          <select id="driver-microstep-input">
-            <option value="1">1/1</option>
-            <option value="2">1/2</option>
-            <option value="4">1/4</option>
-            <option value="8">1/8</option>
-            <option value="16">1/16</option>
-            <option value="32" selected>1/32</option>
-          </select>
-          <button id="driver-microstep-set">設定</button>
-        </div>
-      </article>
-      <div class="gear-ratio-table-wrap">
-        <table class="gear-ratio-table">
-          <thead>
-            <tr><th>論理軸</th><th>Motor基板 / 軸</th><th>ギア比</th><th>操作</th></tr>
-          </thead>
-          <tbody id="gear-ratio-rows"></tbody>
-        </table>
-      </div>
+      <div id="driver-settings-board-groups" class="board-groups"></div>
       <p id="driver-settings-message" class="message" aria-live="polite"></p>
-      <h3 class="driver-settings-subheading">モーションプロファイル<small>SET VMAX/ACCEL/DECEL・軸ごと・モーション停止中のみ変更可能</small></h3>
-      <p class="control-help">
-        最大速度（VMAX）・加速度（ACCEL）・減速度（DECEL）を論理軸ごとに設定します（単位はすべて steps/s、steps/s²）。
-        いずれもモーション停止中のみ変更可能です。
-      </p>
-      <div class="motion-profile-table-wrap">
-        <table class="motion-profile-table">
-          <thead>
-            <tr><th>論理軸</th><th>Motor基板 / 軸</th><th>VMAX (steps/s)</th><th>ACCEL (steps/s²)</th><th>DECEL (steps/s²)</th><th>操作</th></tr>
-          </thead>
-          <tbody id="motion-profile-rows"></tbody>
-        </table>
-      </div>
     </section>
 
     <section class="panel mapping-panel">

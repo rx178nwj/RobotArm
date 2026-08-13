@@ -167,9 +167,19 @@ function thresholdMappings(): AxisMappingEntry[] {
   );
 }
 
-function selectedThresholdAxis(): number | undefined {
-  const value = $<HTMLSelectElement>("threshold-axis").value;
-  return value === "" ? undefined : Number(value);
+function groupMappingsByBoard(mappings: AxisMappingEntry[]): Array<[string, AxisMappingEntry[]]> {
+  const byBoard = new Map<string, AxisMappingEntry[]>();
+  for (const mapping of mappings) {
+    const list = byBoard.get(mapping.motorBoardId!) ?? [];
+    list.push(mapping);
+    byBoard.set(mapping.motorBoardId!, list);
+  }
+  for (const axes of byBoard.values()) axes.sort((a, b) => (a.motorLocalAxis ?? 0) - (b.motorLocalAxis ?? 0));
+  return [...byBoard.entries()].sort(([a], [b]) => a.localeCompare(b));
+}
+
+function boardGroupHeading(boardId: string): string {
+  return `${esc(mappingSettings.boardLabels[boardId] || boardId)}<small>${esc(boardId)}</small>`;
 }
 
 function renderThresholdPanel(): void {
@@ -177,20 +187,48 @@ function renderThresholdPanel(): void {
   state.textContent = controlConnected ? "制御アプリ接続済み" : "制御アプリ未接続";
   state.className = `state ${controlConnected ? "monitoring" : "disconnected"}`;
   const mappings = thresholdMappings();
-  const select = $<HTMLSelectElement>("threshold-axis");
-  const previous = select.value;
-  select.innerHTML = mappings.length
-    ? mappings.map(mapping => `
-      <option value="${mapping.axisId}">${esc(mapping.label || `Axis ${mapping.axisId}`)} · Axis ${mapping.axisId}</option>`).join("")
-    : `<option value="">モーター割当なし</option>`;
-  if (previous && mappings.some(mapping => String(mapping.axisId) === previous)) select.value = previous;
+  const groups = groupMappingsByBoard(mappings);
   const ready = controlConnected && mappings.length > 0;
-  [
-    "threshold-stall-refresh", "threshold-stall-set",
-    "threshold-current-refresh", "threshold-current-set"
-  ].forEach(id => { $<HTMLButtonElement>(id).disabled = !ready; });
-  $<HTMLInputElement>("threshold-stall-input").disabled = !ready;
-  $<HTMLInputElement>("threshold-current-input").disabled = !ready;
+  $("threshold-board-groups").innerHTML = groups.length ? groups.map(([boardId, axes]) => `
+    <article class="board-group">
+      <div class="board-group-header">
+        <h3 class="board-group-heading">${boardGroupHeading(boardId)}</h3>
+        <button class="board-save-button" data-threshold-board-save="${esc(boardId)}" data-threshold-board-save-route-axis="${axes[0].axisId}" ${ready ? "" : "disabled"}>基板設定をNVSに保存</button>
+      </div>
+      <div class="threshold-grid">
+        <article class="threshold-card threshold-card-shared">
+          <h4>過電流フォルト閾値<small>SET/GET CURRENT_LIMIT・基板内全軸共通・mA</small></h4>
+          <div class="threshold-row">
+            <span>現在の設定値</span>
+            <strong data-threshold-current-current="${esc(boardId)}">—</strong>
+            <button data-threshold-current-refresh="${esc(boardId)}" data-threshold-route-axis="${axes[0].axisId}" ${ready ? "" : "disabled"}>取得</button>
+          </div>
+          <div class="threshold-row">
+            <input data-threshold-current-input="${esc(boardId)}" type="number" step="1" min="0" placeholder="例: 6000" ${ready ? "" : "disabled"}>
+            <button data-threshold-current-set="${esc(boardId)}" data-threshold-route-axis="${axes[0].axisId}" ${ready ? "" : "disabled"}>設定</button>
+          </div>
+        </article>
+        ${axes.map(axis => `
+        <article class="threshold-card">
+          <h4>${esc(axis.label || `Axis ${axis.axisId}`)}<small>脱調閾値・論理軸 ${axis.axisId} / 基板内Axis ${axis.motorLocalAxis}</small></h4>
+          <dl class="threshold-live">
+            <div><dt>偏差 (diff)</dt><dd data-threshold-live-deviation="${axis.axisId}">—</dd></div>
+            <div><dt>軸状態</dt><dd data-threshold-live-state="${axis.axisId}">—</dd></div>
+            <div><dt>電流</dt><dd data-threshold-live-current="${axis.axisId}">—</dd></div>
+          </dl>
+          <div class="threshold-row">
+            <span>現在の設定値</span>
+            <strong data-threshold-stall-current="${axis.axisId}">—</strong>
+            <button data-threshold-stall-refresh="${axis.axisId}" ${ready ? "" : "disabled"}>取得</button>
+          </div>
+          <div class="threshold-row">
+            <input data-threshold-stall-input="${axis.axisId}" type="number" step="1" min="0" placeholder="例: 512" ${ready ? "" : "disabled"}>
+            <button data-threshold-stall-set="${axis.axisId}" ${ready ? "" : "disabled"}>設定</button>
+          </div>
+        </article>`).join("")}
+      </div>
+    </article>`).join("") : `<p class="empty">軸マッピングでMotor基板とローカル軸を割り当ててください。</p>`;
+  bindThresholdControls();
   if (!controlConnected) {
     setThresholdMessage("制御アプリを起動すると閾値の取得・変更ができます。", true);
   } else if (!mappings.length) {
@@ -201,61 +239,126 @@ function renderThresholdPanel(): void {
   updateThresholdLiveValues();
 }
 
-function updateThresholdLiveValues(): void {
-  const axisId = selectedThresholdAxis();
-  const axis = axisId === undefined ? undefined : robotSnapshot.axes.find(item => item.axisId === axisId);
-  $("threshold-live-deviation").textContent = formatNumber(axis?.motor?.deviation, 0);
-  $("threshold-live-state").textContent = axis?.motor?.state ?? "—";
-  $("threshold-live-current").textContent = axis?.motor ? `${formatNumber(axis.motor.currentMa, 0)} mA` : "—";
+function bindThresholdControls(): void {
+  document.querySelectorAll<HTMLButtonElement>("[data-threshold-stall-refresh]").forEach(button => {
+    button.onclick = () => void thresholdStallGet(Number(button.dataset.thresholdStallRefresh));
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-threshold-stall-set]").forEach(button => {
+    button.onclick = () => void thresholdStallSet(Number(button.dataset.thresholdStallSet));
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-threshold-current-refresh]").forEach(button => {
+    button.onclick = () => void thresholdCurrentGet(button.dataset.thresholdCurrentRefresh!, Number(button.dataset.thresholdRouteAxis));
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-threshold-current-set]").forEach(button => {
+    button.onclick = () => void thresholdCurrentSet(button.dataset.thresholdCurrentSet!, Number(button.dataset.thresholdRouteAxis));
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-threshold-board-save]").forEach(button => {
+    button.onclick = () => void boardSave(
+      button.dataset.thresholdBoardSave!,
+      Number(button.dataset.thresholdBoardSaveRouteAxis),
+      setThresholdMessage
+    );
+  });
 }
 
-async function thresholdGet(
-  command: "GET_STALL_FAULT" | "GET_CURRENT_LIMIT",
-  displayId: string
+async function boardSave(
+  boardId: string,
+  routeAxis: number,
+  setMessage: (text: string, error?: boolean) => void
 ): Promise<void> {
-  const axisId = selectedThresholdAxis();
-  if (axisId === undefined) {
-    setThresholdMessage("対象の論理軸を選択してください。", true);
-    return;
-  }
+  if (!window.confirm(`基板 ${boardId} の設定（全軸分）をNVSに保存します。続行しますか？`)) return;
   try {
-    const result = await window.robotArmApi.sendControlCommand({ logicalAxis: axisId, command });
+    const result = await window.robotArmApi.sendControlCommand({ logicalAxis: routeAxis, command: "SAVE" });
+    setMessage(
+      result.ok
+        ? `SAVE · ${boardId} → OK`
+        : `SAVE · ${boardId} → ERR ${result.error ?? "UNKNOWN"}${result.message ? ` ${result.message}` : ""}`,
+      !result.ok
+    );
+  } catch (error) {
+    setMessage(`SAVE失敗: ${errorText(error)}`, true);
+  }
+}
+
+function updateThresholdLiveValues(): void {
+  for (const mapping of thresholdMappings()) {
+    const axis = robotSnapshot.axes.find(item => item.axisId === mapping.axisId);
+    const deviation = document.querySelector<HTMLElement>(`[data-threshold-live-deviation="${mapping.axisId}"]`);
+    const stateEl = document.querySelector<HTMLElement>(`[data-threshold-live-state="${mapping.axisId}"]`);
+    const currentEl = document.querySelector<HTMLElement>(`[data-threshold-live-current="${mapping.axisId}"]`);
+    if (deviation) deviation.textContent = formatNumber(axis?.motor?.deviation, 0);
+    if (stateEl) stateEl.textContent = axis?.motor?.state ?? "—";
+    if (currentEl) currentEl.textContent = axis?.motor ? `${formatNumber(axis.motor.currentMa, 0)} mA` : "—";
+  }
+}
+
+async function thresholdStallGet(axisId: number): Promise<void> {
+  try {
+    const result = await window.robotArmApi.sendControlCommand({ logicalAxis: axisId, command: "GET_STALL_FAULT" });
     if (result.ok) {
-      $(displayId).textContent = result.message ?? "—";
-      setThresholdMessage(`${command} · Axis ${axisId} → OK`);
+      const display = document.querySelector<HTMLElement>(`[data-threshold-stall-current="${axisId}"]`);
+      if (display) display.textContent = result.message ?? "—";
+      setThresholdMessage(`GET_STALL_FAULT · Axis ${axisId} → OK`);
     } else {
-      setThresholdMessage(`${command} · Axis ${axisId} → ERR ${result.error ?? "UNKNOWN"}${result.message ? ` ${result.message}` : ""}`, true);
+      setThresholdMessage(`GET_STALL_FAULT · Axis ${axisId} → ERR ${result.error ?? "UNKNOWN"}${result.message ? ` ${result.message}` : ""}`, true);
     }
   } catch (error) {
-    setThresholdMessage(`${command}失敗: ${errorText(error)}`, true);
+    setThresholdMessage(`GET_STALL_FAULT失敗: ${errorText(error)}`, true);
   }
 }
 
-async function thresholdSet(
-  command: "SET_STALL_FAULT" | "SET_CURRENT_LIMIT",
-  inputId: string,
-  displayId: string
-): Promise<void> {
-  const axisId = selectedThresholdAxis();
-  if (axisId === undefined) {
-    setThresholdMessage("対象の論理軸を選択してください。", true);
-    return;
-  }
-  const value = Number($<HTMLInputElement>(inputId).value);
+async function thresholdStallSet(axisId: number): Promise<void> {
+  const value = Number(document.querySelector<HTMLInputElement>(`[data-threshold-stall-input="${axisId}"]`)?.value);
   if (!Number.isFinite(value) || value < 0) {
     setThresholdMessage("0以上の数値を入力してください。", true);
     return;
   }
   try {
-    const result = await window.robotArmApi.sendControlCommand({ logicalAxis: axisId, command, args: [value] });
+    const result = await window.robotArmApi.sendControlCommand({ logicalAxis: axisId, command: "SET_STALL_FAULT", args: [value] });
     if (result.ok) {
-      $(displayId).textContent = String(value);
-      setThresholdMessage(`${command} · Axis ${axisId} → OK`);
+      const display = document.querySelector<HTMLElement>(`[data-threshold-stall-current="${axisId}"]`);
+      if (display) display.textContent = String(value);
+      setThresholdMessage(`SET_STALL_FAULT · Axis ${axisId} → OK`);
     } else {
-      setThresholdMessage(`${command} · Axis ${axisId} → ERR ${result.error ?? "UNKNOWN"}${result.message ? ` ${result.message}` : ""}`, true);
+      setThresholdMessage(`SET_STALL_FAULT · Axis ${axisId} → ERR ${result.error ?? "UNKNOWN"}${result.message ? ` ${result.message}` : ""}`, true);
     }
   } catch (error) {
-    setThresholdMessage(`${command}失敗: ${errorText(error)}`, true);
+    setThresholdMessage(`SET_STALL_FAULT失敗: ${errorText(error)}`, true);
+  }
+}
+
+async function thresholdCurrentGet(boardId: string, routeAxis: number): Promise<void> {
+  try {
+    const result = await window.robotArmApi.sendControlCommand({ logicalAxis: routeAxis, command: "GET_CURRENT_LIMIT" });
+    if (result.ok) {
+      const display = document.querySelector<HTMLElement>(`[data-threshold-current-current="${boardId}"]`);
+      if (display) display.textContent = result.message ?? "—";
+      setThresholdMessage(`GET_CURRENT_LIMIT · ${boardId} → OK`);
+    } else {
+      setThresholdMessage(`GET_CURRENT_LIMIT · ${boardId} → ERR ${result.error ?? "UNKNOWN"}${result.message ? ` ${result.message}` : ""}`, true);
+    }
+  } catch (error) {
+    setThresholdMessage(`GET_CURRENT_LIMIT失敗: ${errorText(error)}`, true);
+  }
+}
+
+async function thresholdCurrentSet(boardId: string, routeAxis: number): Promise<void> {
+  const value = Number(document.querySelector<HTMLInputElement>(`[data-threshold-current-input="${boardId}"]`)?.value);
+  if (!Number.isFinite(value) || value < 0) {
+    setThresholdMessage("0以上の数値を入力してください。", true);
+    return;
+  }
+  try {
+    const result = await window.robotArmApi.sendControlCommand({ logicalAxis: routeAxis, command: "SET_CURRENT_LIMIT", args: [value] });
+    if (result.ok) {
+      const display = document.querySelector<HTMLElement>(`[data-threshold-current-current="${boardId}"]`);
+      if (display) display.textContent = String(value);
+      setThresholdMessage(`SET_CURRENT_LIMIT · ${boardId} → OK`);
+    } else {
+      setThresholdMessage(`SET_CURRENT_LIMIT · ${boardId} → ERR ${result.error ?? "UNKNOWN"}${result.message ? ` ${result.message}` : ""}`, true);
+    }
+  } catch (error) {
+    setThresholdMessage(`SET_CURRENT_LIMIT失敗: ${errorText(error)}`, true);
   }
 }
 
@@ -269,26 +372,107 @@ function driverSettingsMappings(): AxisMappingEntry[] {
   return thresholdMappings();
 }
 
-function selectedDriverSettingsAxis(): number | undefined {
-  const value = $<HTMLSelectElement>("driver-settings-axis").value;
-  return value === "" ? undefined : Number(value);
-}
-
 function renderDriverSettingsPanel(): void {
   const state = $("driver-settings-state");
   state.textContent = controlConnected ? "制御アプリ接続済み" : "制御アプリ未接続";
   state.className = `state ${controlConnected ? "monitoring" : "disconnected"}`;
   const mappings = driverSettingsMappings();
-  const select = $<HTMLSelectElement>("driver-settings-axis");
-  const previous = select.value;
-  select.innerHTML = mappings.length
-    ? mappings.map(mapping => `
-      <option value="${mapping.axisId}">${esc(mapping.label || `Axis ${mapping.axisId}`)} · Axis ${mapping.axisId}</option>`).join("")
-    : `<option value="">モーター割当なし</option>`;
-  if (previous && mappings.some(mapping => String(mapping.axisId) === previous)) select.value = previous;
+  const groups = groupMappingsByBoard(mappings);
   const ready = controlConnected && mappings.length > 0;
-  ["driver-microstep-refresh", "driver-microstep-set"].forEach(id => { $<HTMLButtonElement>(id).disabled = !ready; });
-  $<HTMLSelectElement>("driver-microstep-input").disabled = !ready;
+  $("driver-settings-board-groups").innerHTML = groups.length ? groups.map(([boardId, axes]) => `
+    <article class="board-group">
+      <div class="board-group-header">
+        <h3 class="board-group-heading">${boardGroupHeading(boardId)}</h3>
+        <button class="board-save-button" data-driver-board-save="${esc(boardId)}" data-driver-board-save-route-axis="${axes[0].axisId}" ${ready ? "" : "disabled"}>基板設定をNVSに保存</button>
+      </div>
+      <article class="threshold-card threshold-card-shared">
+        <h4>マイクロステップ<small>SET/GET MICROSTEP・基板内全軸共通・分周比</small></h4>
+        <p class="threshold-note">トルクの速度余裕を上げたい場合は分周比を下げます（例: 1/32→1/16）。基板内全軸のモーションが停止中のみ変更可能です。</p>
+        <div class="threshold-row">
+          <span>現在の設定値</span>
+          <strong data-driver-microstep-current="${esc(boardId)}">—</strong>
+          <button data-driver-microstep-refresh="${esc(boardId)}" data-driver-route-axis="${axes[0].axisId}" ${ready ? "" : "disabled"}>取得</button>
+        </div>
+        <div class="threshold-row">
+          <select data-driver-microstep-input="${esc(boardId)}" ${ready ? "" : "disabled"}>
+            <option value="1">1/1</option>
+            <option value="2">1/2</option>
+            <option value="4">1/4</option>
+            <option value="8">1/8</option>
+            <option value="16">1/16</option>
+            <option value="32" selected>1/32</option>
+          </select>
+          <button data-driver-microstep-set="${esc(boardId)}" data-driver-route-axis="${axes[0].axisId}" ${ready ? "" : "disabled"}>設定</button>
+        </div>
+      </article>
+      <div class="gear-ratio-table-wrap">
+        <table class="gear-ratio-table">
+          <thead>
+            <tr><th>論理軸</th><th>基板内Axis</th><th>ギア比</th><th>操作</th></tr>
+          </thead>
+          <tbody>
+            ${axes.map(axis => `
+            <tr data-gear-ratio-row="${axis.axisId}">
+              <td><strong>${esc(axis.label || `Axis ${axis.axisId}`)}</strong><small>論理軸 ${axis.axisId}</small></td>
+              <td>Axis ${axis.motorLocalAxis}</td>
+              <td><input data-gear-ratio-input="${axis.axisId}" type="number" min="0.01" step="0.1" value="1" ${ready ? "" : "disabled"}></td>
+              <td class="gear-ratio-actions">
+                <button data-gear-ratio-get="${axis.axisId}" ${ready ? "" : "disabled"}>取得</button>
+                <button data-gear-ratio-set="${axis.axisId}" ${ready ? "" : "disabled"}>設定</button>
+              </td>
+            </tr>`).join("")}
+          </tbody>
+        </table>
+      </div>
+      <h4 class="driver-settings-subheading">モータータイプ<small>SET/GET MOTOR_TYPE・軸ごと・モーション停止中のみ変更可能・エンコーダなし軸は multi_i2c_bridge 絶対角でホーミング</small></h4>
+      <div class="motor-type-table-wrap">
+        <table class="motor-type-table">
+          <thead>
+            <tr><th>論理軸</th><th>基板内Axis</th><th>モータータイプ</th><th>操作</th></tr>
+          </thead>
+          <tbody>
+            ${axes.map(axis => `
+            <tr data-motor-type-row="${axis.axisId}">
+              <td><strong>${esc(axis.label || `Axis ${axis.axisId}`)}</strong><small>論理軸 ${axis.axisId}</small></td>
+              <td>Axis ${axis.motorLocalAxis}</td>
+              <td>
+                <select data-motor-type-input="${axis.axisId}" ${ready ? "" : "disabled"}>
+                  <option value="0" selected>CLOSED_LOOP（エンコーダ付き）</option>
+                  <option value="1">OPEN_LOOP（エンコーダなし）</option>
+                </select>
+              </td>
+              <td class="motor-type-actions">
+                <button data-motor-type-get="${axis.axisId}" ${ready ? "" : "disabled"}>取得</button>
+                <button data-motor-type-set="${axis.axisId}" ${ready ? "" : "disabled"}>設定</button>
+              </td>
+            </tr>`).join("")}
+          </tbody>
+        </table>
+      </div>
+      <h4 class="driver-settings-subheading">モーションプロファイル<small>SET VMAX/ACCEL/DECEL・軸ごと・モーション停止中のみ変更可能</small></h4>
+      <div class="motion-profile-table-wrap">
+        <table class="motion-profile-table">
+          <thead>
+            <tr><th>論理軸</th><th>基板内Axis</th><th>VMAX (steps/s)</th><th>ACCEL (steps/s²)</th><th>DECEL (steps/s²)</th><th>操作</th></tr>
+          </thead>
+          <tbody>
+            ${axes.map(axis => `
+            <tr data-motion-profile-row="${axis.axisId}">
+              <td><strong>${esc(axis.label || `Axis ${axis.axisId}`)}</strong><small>論理軸 ${axis.axisId}</small></td>
+              <td>Axis ${axis.motorLocalAxis}</td>
+              <td><input data-motion-vmax="${axis.axisId}" type="number" min="1" max="200000" step="1" ${ready ? "" : "disabled"}></td>
+              <td><input data-motion-accel="${axis.axisId}" type="number" min="1" step="1" ${ready ? "" : "disabled"}></td>
+              <td><input data-motion-decel="${axis.axisId}" type="number" min="1" step="1" ${ready ? "" : "disabled"}></td>
+              <td class="motion-profile-actions">
+                <button data-motion-get="${axis.axisId}" ${ready ? "" : "disabled"}>取得</button>
+                <button data-motion-set="${axis.axisId}" ${ready ? "" : "disabled"}>設定</button>
+              </td>
+            </tr>`).join("")}
+          </tbody>
+        </table>
+      </div>
+    </article>`).join("") : `<p class="empty">軸マッピングでMotor基板とローカル軸を割り当ててください。</p>`;
+  bindDriverSettingsControls();
   if (!controlConnected) {
     setDriverSettingsMessage("制御アプリを起動すると設定の取得・変更ができます。", true);
   } else if (!mappings.length) {
@@ -296,70 +480,58 @@ function renderDriverSettingsPanel(): void {
   } else if ($("driver-settings-message").classList.contains("error")) {
     setDriverSettingsMessage("");
   }
-  renderGearRatioRows();
-  renderMotionProfileRows();
 }
 
-async function driverMicrostepGet(): Promise<void> {
-  const axisId = selectedDriverSettingsAxis();
-  if (axisId === undefined) {
-    setDriverSettingsMessage("対象の論理軸を選択してください。", true);
-    return;
-  }
+function bindDriverSettingsControls(): void {
+  document.querySelectorAll<HTMLButtonElement>("[data-driver-microstep-refresh]").forEach(button => {
+    button.onclick = () => void driverMicrostepGet(button.dataset.driverMicrostepRefresh!, Number(button.dataset.driverRouteAxis));
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-driver-microstep-set]").forEach(button => {
+    button.onclick = () => void driverMicrostepSet(button.dataset.driverMicrostepSet!, Number(button.dataset.driverRouteAxis));
+  });
+  bindGearRatioControls();
+  bindMotorTypeControls();
+  bindMotionProfileControls();
+  document.querySelectorAll<HTMLButtonElement>("[data-driver-board-save]").forEach(button => {
+    button.onclick = () => void boardSave(
+      button.dataset.driverBoardSave!,
+      Number(button.dataset.driverBoardSaveRouteAxis),
+      setDriverSettingsMessage
+    );
+  });
+}
+
+async function driverMicrostepGet(boardId: string, routeAxis: number): Promise<void> {
   try {
-    const result = await window.robotArmApi.sendControlCommand({ logicalAxis: axisId, command: "GET_MICROSTEP" });
+    const result = await window.robotArmApi.sendControlCommand({ logicalAxis: routeAxis, command: "GET_MICROSTEP" });
     if (result.ok) {
-      $("driver-microstep-current").textContent = result.message ?? "—";
-      if (result.message) $<HTMLSelectElement>("driver-microstep-input").value = result.message;
-      setDriverSettingsMessage(`GET_MICROSTEP · Axis ${axisId} → OK`);
+      const display = document.querySelector<HTMLElement>(`[data-driver-microstep-current="${boardId}"]`);
+      if (display) display.textContent = result.message ?? "—";
+      const select = document.querySelector<HTMLSelectElement>(`[data-driver-microstep-input="${boardId}"]`);
+      if (select && result.message) select.value = result.message;
+      setDriverSettingsMessage(`GET_MICROSTEP · ${boardId} → OK`);
     } else {
-      setDriverSettingsMessage(`GET_MICROSTEP · Axis ${axisId} → ERR ${result.error ?? "UNKNOWN"}${result.message ? ` ${result.message}` : ""}`, true);
+      setDriverSettingsMessage(`GET_MICROSTEP · ${boardId} → ERR ${result.error ?? "UNKNOWN"}${result.message ? ` ${result.message}` : ""}`, true);
     }
   } catch (error) {
     setDriverSettingsMessage(`GET_MICROSTEP失敗: ${errorText(error)}`, true);
   }
 }
 
-async function driverMicrostepSet(): Promise<void> {
-  const axisId = selectedDriverSettingsAxis();
-  if (axisId === undefined) {
-    setDriverSettingsMessage("対象の論理軸を選択してください。", true);
-    return;
-  }
-  const value = Number($<HTMLSelectElement>("driver-microstep-input").value);
+async function driverMicrostepSet(boardId: string, routeAxis: number): Promise<void> {
+  const value = Number(document.querySelector<HTMLSelectElement>(`[data-driver-microstep-input="${boardId}"]`)?.value);
   try {
-    const result = await window.robotArmApi.sendControlCommand({ logicalAxis: axisId, command: "SET_MICROSTEP", args: [value] });
+    const result = await window.robotArmApi.sendControlCommand({ logicalAxis: routeAxis, command: "SET_MICROSTEP", args: [value] });
     if (result.ok) {
-      $("driver-microstep-current").textContent = String(value);
-      setDriverSettingsMessage(`SET_MICROSTEP · Axis ${axisId} → OK`);
+      const display = document.querySelector<HTMLElement>(`[data-driver-microstep-current="${boardId}"]`);
+      if (display) display.textContent = String(value);
+      setDriverSettingsMessage(`SET_MICROSTEP · ${boardId} → OK`);
     } else {
-      setDriverSettingsMessage(`SET_MICROSTEP · Axis ${axisId} → ERR ${result.error ?? "UNKNOWN"}${result.message ? ` ${result.message}` : ""}`, true);
+      setDriverSettingsMessage(`SET_MICROSTEP · ${boardId} → ERR ${result.error ?? "UNKNOWN"}${result.message ? ` ${result.message}` : ""}`, true);
     }
   } catch (error) {
     setDriverSettingsMessage(`SET_MICROSTEP失敗: ${errorText(error)}`, true);
   }
-}
-
-function renderGearRatioRows(): void {
-  $("gear-ratio-rows").innerHTML = Array.from({ length: 12 }, (_, index) => {
-    const axisId = index + 1;
-    const mapping = verificationMapping(axisId);
-    const assigned = mapping.motorBoardId !== undefined && mapping.motorLocalAxis !== undefined;
-    const boardLabel = assigned ? (mappingSettings.boardLabels[mapping.motorBoardId!] || mapping.motorBoardId) : undefined;
-    const disabledAttr = !controlConnected || !assigned ? "disabled" : "";
-    return `
-      <tr data-gear-ratio-row="${axisId}">
-        <td><strong>${esc(mapping.label || `Axis ${axisId}`)}</strong><small>論理軸 ${axisId}</small></td>
-        <td>${assigned ? `${esc(boardLabel)} / Axis ${mapping.motorLocalAxis}` : "未割当"}</td>
-        <td><input data-gear-ratio-input="${axisId}" type="number" min="0.01" step="0.1" value="1" ${disabledAttr}></td>
-        <td class="gear-ratio-actions">
-          <button data-gear-ratio-get="${axisId}" ${disabledAttr}>取得</button>
-          <button data-gear-ratio-set="${axisId}" ${disabledAttr}>設定</button>
-          <button data-gear-ratio-save="${axisId}" ${disabledAttr}>NVS保存</button>
-        </td>
-      </tr>`;
-  }).join("");
-  bindGearRatioControls();
 }
 
 function bindGearRatioControls(): void {
@@ -368,14 +540,6 @@ function bindGearRatioControls(): void {
   });
   document.querySelectorAll<HTMLButtonElement>("[data-gear-ratio-set]").forEach(button => {
     button.onclick = () => void gearRatioSet(Number(button.dataset.gearRatioSet));
-  });
-  document.querySelectorAll<HTMLButtonElement>("[data-gear-ratio-save]").forEach(button => {
-    button.onclick = () => {
-      const axisId = Number(button.dataset.gearRatioSave);
-      if (window.confirm(`論理軸 ${axisId} の基板の設定（全軸分）をNVSに保存します。続行しますか？`)) {
-        void sendJointCommand(axisId, "SAVE");
-      }
-    };
   });
 }
 
@@ -416,27 +580,50 @@ async function gearRatioSet(axisId: number): Promise<void> {
   }
 }
 
-function renderMotionProfileRows(): void {
-  $("motion-profile-rows").innerHTML = Array.from({ length: 12 }, (_, index) => {
-    const axisId = index + 1;
-    const mapping = verificationMapping(axisId);
-    const assigned = mapping.motorBoardId !== undefined && mapping.motorLocalAxis !== undefined;
-    const boardLabel = assigned ? (mappingSettings.boardLabels[mapping.motorBoardId!] || mapping.motorBoardId) : undefined;
-    const disabledAttr = !controlConnected || !assigned ? "disabled" : "";
-    return `
-      <tr data-motion-profile-row="${axisId}">
-        <td><strong>${esc(mapping.label || `Axis ${axisId}`)}</strong><small>論理軸 ${axisId}</small></td>
-        <td>${assigned ? `${esc(boardLabel)} / Axis ${mapping.motorLocalAxis}` : "未割当"}</td>
-        <td><input data-motion-vmax="${axisId}" type="number" min="1" max="200000" step="1" ${disabledAttr}></td>
-        <td><input data-motion-accel="${axisId}" type="number" min="1" step="1" ${disabledAttr}></td>
-        <td><input data-motion-decel="${axisId}" type="number" min="1" step="1" ${disabledAttr}></td>
-        <td class="motion-profile-actions">
-          <button data-motion-get="${axisId}" ${disabledAttr}>取得</button>
-          <button data-motion-set="${axisId}" ${disabledAttr}>設定</button>
-        </td>
-      </tr>`;
-  }).join("");
-  bindMotionProfileControls();
+function bindMotorTypeControls(): void {
+  document.querySelectorAll<HTMLButtonElement>("[data-motor-type-get]").forEach(button => {
+    button.onclick = () => void motorTypeGet(Number(button.dataset.motorTypeGet));
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-motor-type-set]").forEach(button => {
+    button.onclick = () => void motorTypeSet(Number(button.dataset.motorTypeSet));
+  });
+}
+
+async function motorTypeGet(axisId: number): Promise<void> {
+  try {
+    const result = await window.robotArmApi.sendControlCommand({ logicalAxis: axisId, command: "GET_MOTOR_TYPE" });
+    if (result.ok && result.message) {
+      const select = document.querySelector<HTMLSelectElement>(`[data-motor-type-input="${axisId}"]`);
+      if (select) select.value = result.message.trim();
+    }
+    setDriverSettingsMessage(
+      result.ok
+        ? `GET_MOTOR_TYPE · Axis ${axisId} → OK${result.message ? ` ${result.message}` : ""}`
+        : `GET_MOTOR_TYPE · Axis ${axisId} → ERR ${result.error ?? "UNKNOWN"}${result.message ? ` ${result.message}` : ""}`,
+      !result.ok
+    );
+  } catch (error) {
+    setDriverSettingsMessage(`GET_MOTOR_TYPE失敗: ${errorText(error)}`, true);
+  }
+}
+
+async function motorTypeSet(axisId: number): Promise<void> {
+  const value = Number(document.querySelector<HTMLSelectElement>(`[data-motor-type-input="${axisId}"]`)?.value);
+  if (value !== 0 && value !== 1) {
+    setDriverSettingsMessage("モータータイプはCLOSED_LOOPまたはOPEN_LOOPを選択してください。", true);
+    return;
+  }
+  try {
+    const result = await window.robotArmApi.sendControlCommand({ logicalAxis: axisId, command: "SET_MOTOR_TYPE", args: [value] });
+    setDriverSettingsMessage(
+      result.ok
+        ? `SET_MOTOR_TYPE · Axis ${axisId} → OK`
+        : `SET_MOTOR_TYPE · Axis ${axisId} → ERR ${result.error ?? "UNKNOWN"}${result.message ? ` ${result.message}` : ""}`,
+      !result.ok
+    );
+  } catch (error) {
+    setDriverSettingsMessage(`SET_MOTOR_TYPE失敗: ${errorText(error)}`, true);
+  }
 }
 
 function bindMotionProfileControls(): void {
@@ -498,31 +685,45 @@ async function motionProfileSet(axisId: number): Promise<void> {
 
 async function autoLoadDriverSettings(): Promise<void> {
   if (!controlConnected) return;
-  const mappings = driverSettingsMappings();
-  if (!mappings.length) return;
-  const axisId = selectedDriverSettingsAxis() ?? mappings[0].axisId;
-  try {
-    const result = await window.robotArmApi.sendControlCommand({ logicalAxis: axisId, command: "GET_MICROSTEP" });
-    if (result.ok && result.message) {
-      $("driver-microstep-current").textContent = result.message;
-      $<HTMLSelectElement>("driver-microstep-input").value = result.message;
-    }
-  } catch {
-    // Best-effort auto-load; manual refresh remains available if this fails.
-  }
-  for (const mapping of mappings) {
+  const groups = groupMappingsByBoard(driverSettingsMappings());
+  if (!groups.length) return;
+  for (const [boardId, axes] of groups) {
     try {
-      const result = await window.robotArmApi.sendControlCommand({ logicalAxis: mapping.axisId, command: "GET_GEAR_RATIO" });
+      const result = await window.robotArmApi.sendControlCommand({ logicalAxis: axes[0].axisId, command: "GET_MICROSTEP" });
       if (result.ok && result.message) {
-        const input = document.querySelector<HTMLInputElement>(`[data-gear-ratio-input="${mapping.axisId}"]`);
-        if (input) input.value = result.message;
+        const display = document.querySelector<HTMLElement>(`[data-driver-microstep-current="${boardId}"]`);
+        if (display) display.textContent = result.message;
+        const select = document.querySelector<HTMLSelectElement>(`[data-driver-microstep-input="${boardId}"]`);
+        if (select) select.value = result.message;
       }
     } catch {
       // Best-effort auto-load; manual refresh remains available if this fails.
     }
-  }
-  for (const mapping of mappings) {
-    await motionProfileGet(mapping.axisId);
+    for (const axis of axes) {
+      try {
+        const result = await window.robotArmApi.sendControlCommand({ logicalAxis: axis.axisId, command: "GET_GEAR_RATIO" });
+        if (result.ok && result.message) {
+          const input = document.querySelector<HTMLInputElement>(`[data-gear-ratio-input="${axis.axisId}"]`);
+          if (input) input.value = result.message;
+        }
+      } catch {
+        // Best-effort auto-load; manual refresh remains available if this fails.
+      }
+    }
+    for (const axis of axes) {
+      try {
+        const result = await window.robotArmApi.sendControlCommand({ logicalAxis: axis.axisId, command: "GET_MOTOR_TYPE" });
+        if (result.ok && result.message) {
+          const select = document.querySelector<HTMLSelectElement>(`[data-motor-type-input="${axis.axisId}"]`);
+          if (select) select.value = result.message.trim();
+        }
+      } catch {
+        // Best-effort auto-load; manual refresh remains available if this fails.
+      }
+    }
+    for (const axis of axes) {
+      await motionProfileGet(axis.axisId);
+    }
   }
 }
 
@@ -1769,13 +1970,6 @@ async function init(): Promise<void> {
   $("send-move").onclick = () => void executeMove("MOVE", "move-steps");
   $("send-moveto").onclick = () => void executeMove("MOVETO", "moveto-position");
   $("control-estop").onclick = () => void executeEstop();
-  $("threshold-axis").onchange = () => updateThresholdLiveValues();
-  $("threshold-stall-refresh").onclick = () => void thresholdGet("GET_STALL_FAULT", "threshold-stall-current");
-  $("threshold-stall-set").onclick = () => void thresholdSet("SET_STALL_FAULT", "threshold-stall-input", "threshold-stall-current");
-  $("threshold-current-refresh").onclick = () => void thresholdGet("GET_CURRENT_LIMIT", "threshold-current-current");
-  $("threshold-current-set").onclick = () => void thresholdSet("SET_CURRENT_LIMIT", "threshold-current-input", "threshold-current-current");
-  $("driver-microstep-refresh").onclick = () => void driverMicrostepGet();
-  $("driver-microstep-set").onclick = () => void driverMicrostepSet();
   $("dashboard-axis-select").onchange = () => renderAxisDetail();
   document.querySelectorAll<HTMLButtonElement>("[data-dashboard-view]").forEach(button => {
     button.onclick = () => switchDashboardView(button.dataset.dashboardView as typeof dashboardView);

@@ -39,6 +39,7 @@ main { padding: 22px 38px 36px; max-width: 1280px; margin: auto; }
 }
 .app-tab-panel[hidden] { display: none; }
 .panel { border: 1px solid #25344b; border-radius: 12px; background: rgba(16, 25, 39, .88); padding: 18px; }
+.driver-settings-panel { grid-column: 1 / -1; }
 .panel-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px; }
 .badge, .state { border-radius: 999px; padding: 4px 9px; background: #223149; color: #aab7ca; font-size: 12px; }
 .state.monitoring { background: #163b37; color: #62ded0; }
@@ -233,12 +234,17 @@ input { flex: 1; min-width: 0; color: #e8edf5; background: #0c1522; border: 1px 
 .error-card.faulted .error-row-code strong { color: #ff879b; }
 .error-row-comm > div { flex-direction: row; align-items: center; gap: 6px; font-size: 11px; color: #8796ac; }
 .error-row-comm strong { font-size: 11px; margin-left: auto; }
-.threshold-axis-select { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; color: #91a0b5; font-size: 12px; }
-.threshold-axis-select select { min-width: 220px; padding: 8px; color: #e8edf5; border: 1px solid #304058; border-radius: 7px; background: #0c1522; }
+.board-groups { display: grid; gap: 16px; }
+.board-group { padding: 14px; border: 1px solid #2b405b; border-radius: 12px; background: #0d1725; }
+.board-group-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 12px; }
+.board-group-heading { display: flex; align-items: baseline; gap: 8px; margin: 0; font-size: 14px; color: #e8edf5; }
+.board-group-heading small { color: #6fd7dc; font: 11px Consolas, monospace; font-weight: normal; }
+.board-save-button { flex-shrink: 0; padding: 7px 12px; font-size: 12px; font-weight: 600; color: #7fe3a3; background: #0f2417; border: 1px solid #2f6b46; border-radius: 7px; }
 .threshold-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
 .threshold-card { padding: 14px; border: 1px solid #25344b; border-radius: 10px; background: #101b2a; }
-.threshold-card h3 { margin: 0 0 10px; font-size: 13px; }
-.threshold-card h3 small { display: block; margin-top: 3px; font-weight: normal; color: #8796ac; }
+.threshold-card.threshold-card-shared { border-color: #3a4f37; background: #121e13; }
+.threshold-card h3, .threshold-card h4 { margin: 0 0 10px; font-size: 13px; }
+.threshold-card h3 small, .threshold-card h4 small { display: block; margin-top: 3px; font-weight: normal; color: #8796ac; }
 .threshold-live { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 0 0 12px; }
 .threshold-live div { padding: 8px; border-radius: 7px; background: #0b1420; }
 .threshold-live dt { color: #8292a8; font-size: 10px; }
@@ -320,8 +326,20 @@ input { flex: 1; min-width: 0; color: #e8edf5; background: #0c1522; border: 1px 
   border: 1px solid #304058; border-radius: 6px; background: #0c1522;
 }
 .gear-ratio-actions { display: flex; gap: 6px; white-space: nowrap; }
+.motor-type-table-wrap { overflow-x: auto; margin-top: 14px; border: 1px solid #25344b; border-radius: 9px; }
+.motor-type-table { width: 100%; min-width: 640px; border-collapse: collapse; }
+.motor-type-table th { padding: 9px; color: #71839c; background: #0d1725; font-size: 11px; text-align: left; text-transform: uppercase; }
+.motor-type-table td { padding: 7px; border-top: 1px solid #1f2d42; font-size: 13px; }
+.motor-type-table td:first-child small { display: block; margin-top: 2px; color: #8796ac; }
+.motor-type-table select {
+  min-width: 150px; padding: 7px 8px; color: #e8edf5;
+  border: 1px solid #304058; border-radius: 6px; background: #0c1522;
+}
+.motor-type-actions { display: flex; gap: 6px; white-space: nowrap; }
 .driver-settings-subheading { margin: 18px 0 4px; font-size: 13px; }
 .driver-settings-subheading small { display: block; margin-top: 3px; font-weight: normal; color: #8796ac; }
+.board-group .gear-ratio-table-wrap, .board-group .motion-profile-table-wrap, .board-group .motor-type-table-wrap { min-width: 0; }
+.board-group .gear-ratio-table, .board-group .motion-profile-table, .board-group .motor-type-table { min-width: 0; }
 .motion-profile-table-wrap { overflow-x: auto; margin-top: 8px; border: 1px solid #25344b; border-radius: 9px; }
 .motion-profile-table { width: 100%; min-width: 760px; border-collapse: collapse; }
 .motion-profile-table th { padding: 9px; color: #71839c; background: #0d1725; font-size: 11px; text-align: left; text-transform: uppercase; }

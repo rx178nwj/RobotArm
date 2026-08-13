@@ -629,6 +629,14 @@ function validMicrostep(value: unknown): number {
   return number;
 }
 
+const VALID_MOTOR_TYPES = new Set([0, 1]);
+
+function validMotorType(value: unknown): number {
+  const number = Number(value);
+  if (!VALID_MOTOR_TYPES.has(number)) throw new Error("Motor type must be 0 (CLOSED_LOOP) or 1 (OPEN_LOOP)");
+  return number;
+}
+
 function validateControlArgs(
   command: ControlCommandRequest["command"],
   args: unknown[] | undefined
@@ -667,6 +675,11 @@ function validateControlArgs(
         throw new Error(`${command} requires exactly one argument`);
       }
       return [validMicrostep(args[0])];
+    case "SET_MOTOR_TYPE":
+      if (!Array.isArray(args) || args.length !== 1) {
+        throw new Error(`${command} requires exactly one argument`);
+      }
+      return [validMotorType(args[0])];
     case "SET_VMAX":
     case "SET_ACCEL":
     case "SET_DECEL":
@@ -683,6 +696,7 @@ function validateControlArgs(
     case "POT_ZERO_SET":
     case "POT_ZERO_CLEAR":
     case "GET_GEAR_RATIO":
+    case "GET_MOTOR_TYPE":
     case "GET_STALL_FAULT":
     case "GET_CURRENT_LIMIT":
     case "GET_MICROSTEP":
