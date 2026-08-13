@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
-  BleDeviceInfo,
+  BoardStatus,
   BridgeConfigRefreshResult,
   BridgeLoggingState,
   BridgeMaintenanceRequest,
@@ -12,6 +12,7 @@ import type {
   DeviceSnapshot,
   CsvExportResult,
   EstopResult,
+  FaultTraceCapture,
   MappingSettings,
   PortInfo,
   RobotArmSnapshot,
@@ -21,10 +22,6 @@ import type {
 contextBridge.exposeInMainWorld("robotArmApi", {
   listPorts: (): Promise<PortInfo[]> => ipcRenderer.invoke("ports:list"),
   connect: (port: PortInfo): Promise<ConnectResult> => ipcRenderer.invoke("device:connect", port),
-  scanBleDevices: (): Promise<BleDeviceInfo[]> => ipcRenderer.invoke("ble:scan"),
-  connectBle: (device: BleDeviceInfo): Promise<ConnectResult> =>
-    ipcRenderer.invoke("ble:connect", device),
-  openBluetoothSettings: (): Promise<void> => ipcRenderer.invoke("ble:open-settings"),
   disconnect: (boardId: string): Promise<void> => ipcRenderer.invoke("device:disconnect", boardId),
   executeBridgeMaintenance: (
     boardId: string,
@@ -49,6 +46,7 @@ contextBridge.exposeInMainWorld("robotArmApi", {
     ipcRenderer.invoke("control:sync-move", requests),
   sendEstop: (): Promise<EstopResult> => ipcRenderer.invoke("control:estop"),
   getRobotArmSnapshot: (): Promise<RobotArmSnapshot> => ipcRenderer.invoke("robot-arm:snapshot"),
+  getControlAppBoards: (): Promise<BoardStatus[]> => ipcRenderer.invoke("control:boards"),
   onDeviceUpdate: (callback: (snapshot: DeviceSnapshot) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, snapshot: DeviceSnapshot) => callback(snapshot);
     ipcRenderer.on("device:update", listener);
@@ -74,5 +72,15 @@ contextBridge.exposeInMainWorld("robotArmApi", {
     const listener = (_event: Electron.IpcRendererEvent, snapshot: RobotArmSnapshot) => callback(snapshot);
     ipcRenderer.on("robot-arm:update", listener);
     return () => ipcRenderer.removeListener("robot-arm:update", listener);
+  },
+  onControlAppBoardsChanged: (callback: (boards: BoardStatus[]) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, boards: BoardStatus[]) => callback(boards);
+    ipcRenderer.on("control:boards-changed", listener);
+    return () => ipcRenderer.removeListener("control:boards-changed", listener);
+  },
+  onFaultTrace: (callback: (capture: FaultTraceCapture) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, capture: FaultTraceCapture) => callback(capture);
+    ipcRenderer.on("control:fault-trace", listener);
+    return () => ipcRenderer.removeListener("control:fault-trace", listener);
   }
 });

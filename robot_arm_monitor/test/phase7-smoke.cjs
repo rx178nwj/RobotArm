@@ -25,6 +25,14 @@ async function main() {
     { ok: true }
   );
   assert.deepEqual(
+    await client.sendCommand("AABBCCDDEEFF", 1, "MOVE_DEG", [1.25]),
+    { ok: true }
+  );
+  assert.deepEqual(
+    await client.sendCommand("AABBCCDDEEFF", 1, "POT_ZERO_CLEAR"),
+    { ok: true }
+  );
+  assert.deepEqual(
     await client.sendCommand("AABBCCDDEEFF", 0, "SYNC_MOVE", [[0, 100], [2, -50]]),
     { ok: true }
   );
@@ -99,6 +107,20 @@ async function assertLogicalAxisMapping() {
     axis: 2,
     command: "MOVE",
     args: [123]
+  });
+  await manager.executeControlCommand({ logicalAxis: 1, command: "MOVETO_DEG", args: [-12.5] });
+  assert.deepEqual(calls.pop(), {
+    boardId: "BOARD-A",
+    axis: 2,
+    command: "MOVETO_DEG",
+    args: [-12.5]
+  });
+  await manager.executeControlCommand({ logicalAxis: 1, command: "POT_ZERO_SET" });
+  assert.deepEqual(calls.pop(), {
+    boardId: "BOARD-A",
+    axis: 2,
+    command: "POT_ZERO_SET",
+    args: undefined
   });
   await manager.executeSyncMove([
     { logicalAxis: 1, steps: 100 },

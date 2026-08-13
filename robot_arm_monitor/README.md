@@ -1,5 +1,16 @@
 # Robot Arm Monitor
 
+## 関節角度検証パネル
+
+「関節角度検証」では、最大12論理軸についてPOT生角度、POTゼロ補正角度、エンコーダ角度、
+ドライバ位置角度を同時表示します。角度指定の相対・絶対移動、押下中の連続回転、POTゼロ設定・解除は、
+既存のモーション制御と同様に制御アプリのNamed Pipe IPCを経由します。
+
+この機能にはJoint Angle characteristic対応SteppingMotorDriverファームウェアと、
+`MOVE_DEG` / `MOVETO_DEG` / `POT_ZERO_SET` / `POT_ZERO_CLEAR`対応の制御アプリが必要です。
+旧ファームウェアではセンサ値を「未対応」と表示し、BLE監視の他機能は継続します。
+制御アプリが未接続の場合もセンサ表示は継続し、操作ブロックだけを無効化します。
+
 RobotArm2 統合モニタの Phase 9 実装です。複数の`multi_i2c_bridge`を
 USB-CDCで個別に接続する機能に加え、複数のSteppingMotorDriverへBLEで接続し、
 読み取り専用テレメトリを監視できます。モーション操作はSteppingMotorDriverへ

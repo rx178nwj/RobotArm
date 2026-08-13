@@ -28,7 +28,7 @@ RobotArm2 は、複数の**SteppingMotorDriver基板**（モーション制御�
 |-------------|------|------------------|----------|
 | SteppingMotorDriverファームウェア | ESP32-S3、3軸モーション制御 | [SteppingMotorDriver/firmware/REQUIREMENTS.md](../SteppingMotorDriver/firmware/REQUIREMENTS.md) | Phase1〜5実装済み（[CLAUDE.md](../SteppingMotorDriver/CLAUDE.md)） |
 | SteppingMotorDriver ギア角度モニタ機能 | multi_i2c_bridge経由のギア出力角度中継 | [GEAR_ANGLE_MONITOR_REQUIREMENTS.md](../SteppingMotorDriver/firmware/GEAR_ANGLE_MONITOR_REQUIREMENTS.md) | Phase6案、未着手 |
-| SteppingMotorDriver BLE・WiFi通信 | モニタアプリ向け読み取り専用テレメトリ（§4） | [BLE_WIFI_REQUIREMENTS.md](../SteppingMotorDriver/firmware/BLE_WIFI_REQUIREMENTS.md) | 要件定義済み（Phase1〜5未着手） |
+| SteppingMotorDriver BLE・WiFi通信 | 読み取り専用テレメトリ（2026-08-09以降、robot_arm_monitorはUSB-CDC経由に移行済みで本経路を使用しない。将来の別クライアント向けに恒久維持、§4） | [BLE_WIFI_REQUIREMENTS.md](../SteppingMotorDriver/firmware/BLE_WIFI_REQUIREMENTS.md) | 要件定義済み（Phase1〜5未着手） |
 | SteppingMotorDriver monitor_app | 単体デバッグ用Electronアプリ（USB-CDC） | [SteppingMotorDriver/monitor_app/REQUIREMENTS.md](../SteppingMotorDriver/monitor_app/REQUIREMENTS.md) | Phase3まで実装済み |
 | multi_i2c_bridgeファームウェア・回路 | RP2040、AS5600×6ch集約ブリッジ | [multi_i2c_bridge/docs/design_spec.md](../multi_i2c_bridge/docs/design_spec.md)、[command_spec.md](../multi_i2c_bridge/docs/command_spec.md) | 6ch版実装済み |
 | multi_i2c_bridge USBシリアル診断IF | 監視・保守・強制制御コマンド | [multi_i2c_bridge/docs/usb_serial_spec.md](../multi_i2c_bridge/docs/usb_serial_spec.md) | 実装済み |
@@ -44,10 +44,10 @@ RobotArm2 は、複数の**SteppingMotorDriver基板**（モーション制御�
                           モニター/制御 PC
         ┌───────────────────────────────────────────────────┐
         │   モニタアプリ（robot_arm_monitor）   制御アプリ（別アプリ）  │
-        └──────┬───────────────────┬───────────────┬─────────┘
-               │USB(診断)           │Bluetooth(読取専用) │USB(制御, 専有)
-               ▼                   ▼               ▼
-       multi_i2c_bridge0-2   SteppingMotorDriver0-2 ◄┘
+        └──────┬───────────────┬────ローカルIPC────┬─────────┘
+               │USB(診断)       │(コマンド+テレメトリ)│USB(制御+テレメトリ, 専有)
+               ▼               └────────────────────►
+       multi_i2c_bridge0-2   SteppingMotorDriver0-2
                │ I2C                    │
                ▼                        ▼
        angle sensor ×3/枚         Stepping Mtor ×3/枚
@@ -65,13 +65,14 @@ SteppingMotorDriverへは、モニタアプリ・制御アプリの2プロセス
 
 | 接続 | トランスポート | 役割 |
 |------|----------------|------|
-| 制御アプリ ⇔ SteppingMotorDriver | **USB-CDC（専有）** | ENABLE/MOVE/JOG/HOME等のモーション制御コマンド。低遅延・低ジッタが必要な実通信経路（無線はリアルタイム性のリスク要因のため制御コマンドには使わない） |
-| モニタアプリ ⇔ SteppingMotorDriver | **Bluetooth（読み取り専用）** | 軸状態・位置・エンコーダ・電流電圧等のテレメトリ監視のみ。書き込みコマンドは発行しない |
+| 制御アプリ ⇔ SteppingMotorDriver | **USB-CDC（専有）** | ENABLE/MOVE/JOG/HOME等のモーション制御コマンド、および状態取得（`GET`系コマンド）によるテレメトリポーリング。低遅延・低ジッタが必要な実通信経路（無線はリアルタイム性のリスク要因のため制御コマンドには使わない） |
+| モニタアプリ ⇔ SteppingMotorDriver | **直接接続なし** | モニタアプリはSteppingMotorDriverへの直接接続（USB/BLEいずれも）を持たない。テレメトリは制御アプリのローカルIPC中継のみを経由する（下記） |
 | モニタアプリ ⇔ multi_i2c_bridge | **USB（直接）** | bridgeの診断コマンド（`status`/`channels`/`master`/`log`等、読み取り中心） |
 | SteppingMotorDriver ⇔ multi_i2c_bridge | I2C（GPIO38/39、既存確定仕様） | ギア出力角度中継（[GEAR_ANGLE_MONITOR_REQUIREMENTS.md](../SteppingMotorDriver/firmware/GEAR_ANGLE_MONITOR_REQUIREMENTS.md)） |
-| モニタアプリ ⇔ 制御アプリ | ローカルIPC（形式未定、§6 #2） | モニタアプリのモーション制御パネルからのコマンド中継 |
+| モニタアプリ ⇔ 制御アプリ | ローカルIPC（Windows Named Pipe、[CONTROL_APP_REQUIREMENTS.md](CONTROL_APP_REQUIREMENTS.md)） | モニタアプリのモーション制御パネルからのコマンド中継、および制御アプリがUSB-CDC経由でポーリングしたSteppingMotorDriverテレメトリの中継 |
 
-- **WiFiは今後追加実装する**（今回のスコープには含めないが撤回ではない）。用途（モニタアプリ向けテレメトリの代替/追加経路か、制御アプリ向けかを含む）は導入時期が来た時点で別途要件化する。
+- **2026-08-09、モニタアプリのSteppingMotorDriverテレメトリ取得経路をBluetooth（読み取り専用）からUSB-CDC（制御アプリ経由のIPC中継）へ変更**（§7決定ログ参照）。SteppingMotorDriverファームウェアのBLE/WiFiテレメトリ機能自体（[BLE_WIFI_REQUIREMENTS.md](../SteppingMotorDriver/firmware/BLE_WIFI_REQUIREMENTS.md)）は恒久方針として維持し、将来の別用途（他クライアントからの読み取り等）に残す。
+- **WiFiは今後追加実装する**（今回のスコープには含めないが撤回ではない）。用途は導入時期が来た時点で別途要件化する。
 - 無線（Bluetooth/将来のWiFi）はいずれも**読み取り専用**の方針を維持する。モーション制御コマンドの直接発行には使わない。
 - **モニタアプリからのモーション制御操作（ENABLE/MOVE/JOG等、ESTOP含む）は、すべて制御アプリへのIPC中継を経由する**（モニタアプリ自身はSteppingMotorDriverへ書き込みコマンドを発行しない）。制御アプリが未起動・無応答の場合、モニタアプリからの操作（ESTOPを含む）は実行できない。**これは恒久的な残存安全リスクとして記録する**（無線への書き込み例外は設けない方針のため、§6参照）。
 
@@ -122,3 +123,4 @@ SteppingMotorDriverへは、モニタアプリ・制御アプリの2プロセス
 | 2026-07-26 | 制御アプリ・モニタアプリのIPC中継プロトコルを新設（[CONTROL_APP_REQUIREMENTS.md](CONTROL_APP_REQUIREMENTS.md)）。Windows Named Pipe・改行区切りJSON、基板固有ID＋ローカル軸番号でのコマンドアドレス指定、ESTOP集約の並行発行方式を確定し、§6 #2をクローズ。制御アプリ自身のGUI要求仕様書は新たな未解決事項（§6 #7）として記録 |
 | 2026-08-01 | robot_arm_monitorのbridge保守コマンドGUIに0位置設定（`ch <0..5> zero set/clear`）を追加。チャンネルカードにボタンを追加し、`channel_zero_set`実行時のみ確認ダイアログを表示（[robot_arm_monitor/REQUIREMENTS.md F-RAM-GEAR-04](../robot_arm_monitor/REQUIREMENTS.md)） |
 | 2026-08-02 | multi_i2c_bridgeに0位置設定後の角度確認用USBコマンド`ch <0..5> angle`を要件化（[usb_serial_spec.md §4.8](../multi_i2c_bridge/docs/usb_serial_spec.md)、ファームウェア未実装）。robot_arm_monitorにも対応する参照機能（チャンネルカードでの角度即時表示）を要件化（[robot_arm_monitor/REQUIREMENTS.md F-RAM-GEAR-04](../robot_arm_monitor/REQUIREMENTS.md)、いずれも未実装） |
+| 2026-08-09 | §4のBluetooth（読み取り専用）方式を撤回し、モニタアプリのSteppingMotorDriverテレメトリ取得経路をUSB-CDC（制御アプリ経由のローカルIPC中継）へ変更。制御アプリがUSB-CDCの既存`GET`系コマンド（`GET STATE`/`GET POS`/`GET VEL`/`GET ENC`/`GET ADC`/`GET FAULT_INFO`/`GET POS_DEG`/`GET ENC_DEG`/`GET POT_DEG`/`GET GEAR_STATUS`）を周期ポーリングし、既存IPCプロトコル（[CONTROL_APP_REQUIREMENTS.md](CONTROL_APP_REQUIREMENTS.md)）に新設した`telemetry`フレームでモニタアプリへ中継する（同書§4.3改訂）。ファームウェア側のBLE/WiFiテレメトリ機能自体は変更せず恒久方針として維持し、robot_arm_monitorの`stepping-motor-ble-adapter.ts`（BLE central実装）は削除した |

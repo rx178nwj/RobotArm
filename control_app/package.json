@@ -11,6 +11,9 @@
     "dev": "npm run build && electron .",
     "dist": "npm run build && electron-builder",
     "test": "npm run build && node test/phase1-e2e.cjs",
+    "test:integration": "npm run build && npm --prefix ../robot_arm_monitor run build && node test/robot-arm-monitor-integration.cjs",
+    "test:hardware": "npm run build && npm --prefix ../robot_arm_monitor run build && node test/hardware-usb-cdc.cjs",
+    "test:hardware:motion": "npm run build && node test/hardware-motion.cjs",
     "test:client": "node test/mock-ipc-client.cjs"
   },
   "dependencies": {

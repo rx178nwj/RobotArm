@@ -18,7 +18,7 @@
 | フレームワーク | Electron | 既存2アプリと同一、資産流用のため |
 | 言語 | TypeScript | [multi_i2c_bridge/monitor_app](../../multi_i2c_bridge/monitor_app/) が既にTS化済み。[SteppingMotorDriver/monitor_app](../../SteppingMotorDriver/monitor_app/) はJSだが、移植時にTS化する（型でプロトコル差異を明示するため） |
 | シリアル通信 | Node `serialport`（メインプロセス、multi_i2c_bridge向け） | 既存2アプリと同一 |
-| Bluetooth通信 | BLEクライアントライブラリ（メインプロセス、SteppingMotorDriver向け、選定は§8未解決事項） | [design/IF_design.drawio](../../design/IF_design.drawio)確定：モニタアプリ⇔SteppingMotorDriverは読み取り専用Bluetooth（§9） |
+| SteppingMotorDriverテレメトリ | 直接接続なし。制御アプリのローカルIPC（Named Pipe）経由で受信 | 2026-08-09改訂：当初計画のBluetooth直接接続を廃止し、制御アプリがUSB-CDCでポーリングしたテレメトリをIPC中継する方式に変更（§3.2） |
 | チャート描画 | uPlot | [SteppingMotorDriver/monitor_app](../../SteppingMotorDriver/monitor_app/) の採用実績を踏襲（[REQUIREMENTS.md §8 未解決事項#4](../REQUIREMENTS.md)で解決済み） |
 | プロセス構成 | メインプロセスがデバイス列挙・シリアルI/O・パースを担当。レンダラーはIPC経由でパース済み正規化データのみ受信 | 既存2アプリと同一方針（生シリアルデータをレンダラーに流さない） |
 | 対象OS | Windows 10/11 | [REQUIREMENTS.md §5](../REQUIREMENTS.md) |
@@ -40,9 +40,8 @@ robot_arm_monitor/
 │   │   ├── device-manager.ts            # 種別混在デバイスの列挙・接続ライフサイクル管理
 │   │   ├── adapters/
 │   │   │   ├── device-adapter.ts        # 共通インタフェース定義（§3.1）
-│   │   │   ├── stepping-motor-ble-adapter.ts # SteppingMotorDriver向け実装（§3.2、BLE読み取り専用テレメトリ、新規実装）
 │   │   │   ├── multi-i2c-bridge-adapter.ts # multi_i2c_bridge向け実装（§3.3、device-session.ts移植）
-│   │   │   └── control-app-client.ts    # 制御アプリへのIPC中継クライアント（§3.5、F-RAM-CTRL-00）
+│   │   │   └── control-app-client.ts    # 制御アプリへのIPC中継クライアント（§3.5、コマンド中継F-RAM-CTRL-00 + §3.2テレメトリ受信）
 │   │   ├── axis-mapping.ts              # 論理軸(動的N軸、最大12)⇔基板/ローカルch対応表の永続化（§5）
 │   │   └── preload.ts
 │   ├── renderer/
@@ -101,14 +100,14 @@ export const VID_HINT: Record<string, DeviceKind> = {
 - `device-manager.ts` は `serialport.list()` のポート一覧を `VID_HINT` で一次分類し、ヒントに従って `IdentityProbe`（motor用: `PING`→`GET BOARD_ID`、bridge用: `identity`）を優先順に試行する。ヒントが外れていた場合（VIDは一致するが識別コマンドが無応答/不一致）はもう一方のプロトコルへフォールバックする。VIDが `VID_HINT` に存在しないポートは自動判別対象外とし、手動ポート指定導線（既存2アプリの方針を踏襲）でのみ接続可能とする。
 - 将来的にプロトコルが変わってもアダプタ内部の実装のみ変更すればよく、`DeviceAdapter` インタフェースと `device-manager.ts` 側は変更不要とする。
 
-### 3.2 StepBleAdapter（SteppingMotorDriver、読み取り専用テレメトリ）
+### 3.2 SteppingMotorDriverテレメトリ（ControlAppClient経由、2026-08-09改訂）
 
-**[design/IF_design.drawio](../../design/IF_design.drawio)確定により、トランスポートはUSBではなくBluetoothとなる。** [SteppingMotorDriver/monitor_app/src/main/serial-session.js](../../SteppingMotorDriver/monitor_app/src/main/serial-session.js) の通信層（`SerialPort`ベース）はそのまま移植できないため、本アダプタは新規実装とする。
+**2026-08-09、モニタアプリ⇔SteppingMotorDriverの直接接続（当初計画のBluetooth、`StepBleAdapter`/`stepping-motor-ble-adapter.ts`）を廃止した。** モニタアプリはSteppingMotorDriverへ直接接続せず、制御アプリがUSB-CDC経由でポーリングしたテレメトリを、既存のローカルIPC（§3.5 `ControlAppClient`）で受信する（[design/SYSTEM_REQUIREMENTS.md §4](../../design/SYSTEM_REQUIREMENTS.md)、[design/CONTROL_APP_REQUIREMENTS.md §4.5](../../design/CONTROL_APP_REQUIREMENTS.md)）。
 
-- **未確定・外部依存**（[design/SYSTEM_REQUIREMENTS.md §6 #1](../../design/SYSTEM_REQUIREMENTS.md)）：SteppingMotorDriverファームウェア側にBLEテレメトリサービス（GATT）が未実装。本アダプタの実装はファームウェア側のGATT仕様確定後に着手する。
-- 想定するデータ内容は既存の`STATUS`コマンドのJSON構造（[firmware/REQUIREMENTS.md §4](../../SteppingMotorDriver/firmware/REQUIREMENTS.md)）を踏襲する想定だが、BLEの1パケットサイズ制約（ATU、既定23〜247byte程度）によりJSON全体を1通知に収められない場合は分割・再構成が必要になる可能性がある（ファームウェア側GATT設計時に確定）。
-- **書き込み系コマンド（ENABLE/MOVE/HOME等）は本アダプタでは発行しない**（読み取り専用、[REQUIREMENTS.md §7.1](../REQUIREMENTS.md)）。`sendCommand`は`DeviceAdapter`インタフェース上は存在するが、本アダプタでは呼び出されない想定（呼び出された場合はエラーとする）。
-- 識別：`GET BOARD_ID`相当の情報をBLEアドバタイズ名またはGATT特性から取得する方式は未定（[design/SYSTEM_REQUIREMENTS.md §6 #3](../../design/SYSTEM_REQUIREMENTS.md)、Bluetoothデバイス検出・ペアリングUX未検討）。
+- `ControlAppClient`（`control-app-client.ts`）が`telemetry`フレームを受信・パースし、`device-manager.ts`が独立した`DeviceAdapter`を介さず直接`MotorSnapshot`として`latestSnapshots`に反映する（SteppingMotorDriver向けの`DeviceAdapter`実装は存在しない）。
+- **書き込み系コマンド（ENABLE/MOVE/HOME等）は本経路では発行しない**（読み取り専用、[REQUIREMENTS.md §7.1](../REQUIREMENTS.md)）。書き込みはF-RAM-CTRLパネルから§3.5の`ControlAppClient.sendCommand`/`sendEstop`を通す、既存方針のまま。
+- 識別：基板固有ID（`GET BOARD_ID`、factory MAC）は制御アプリ側のIPC `boardsChanged`/`telemetry`フレームの`boardId`としてそのまま届く。モニタアプリ側でのBLEアドバタイズ名・ペアリングの扱いは不要になった。
+- ファームウェア側のBLE/WiFiテレメトリ機能自体（[BLE_WIFI_REQUIREMENTS.md](../../SteppingMotorDriver/firmware/BLE_WIFI_REQUIREMENTS.md)）は変更していない（恒久方針として維持、将来の別クライアント向け）。
 
 ### 3.3 BridgeAdapter（multi_i2c_bridge）
 
@@ -245,7 +244,7 @@ robot_arm_monitor/
 ├── 軸横断比較ビュー（F-RAM-GRAPH-02、新規）
 │   └── メトリック選択式チャート（接続中の論理軸を最大12系列で重畳表示）
 ├── 基板単位ビュー（F-RAM-DASH-03、デバッグ用）
-│   ├── SteppingMotorDriver生データ（3軸分/枚、BLEテレメトリ、既存アプリ相当）
+│   ├── SteppingMotorDriver生データ（3軸分/枚、制御アプリIPC経由テレメトリ、既存アプリ相当）
 │   └── multi_i2c_bridge生データ（6ch分/枚、既存アプリ相当、channels/status/master）
 ├── 軸マッピング設定画面（F-RAM-MAP-01）
 ├── パラメータ設定画面（F-RAM-PARAM）
@@ -258,7 +257,7 @@ robot_arm_monitor/
 
 | 移植元 | 移植先 | 方針 |
 |--------|--------|------|
-| [SteppingMotorDriver/monitor_app/src/main/serial-session.js](../../SteppingMotorDriver/monitor_app/src/main/serial-session.js) | `src/main/adapters/stepping-motor-ble-adapter.ts` | 通信層（`SerialPort`）は移植不可（USB→BLEへトランスポート変更、§3.2）。`STATUS`のJSONパース処理のみ参考にできる。ファームウェア側BLE GATT仕様確定後に新規実装（[design/SYSTEM_REQUIREMENTS.md §6 #1](../../design/SYSTEM_REQUIREMENTS.md)） |
+| （2026-08-09時点で対象外） | ~~`src/main/adapters/stepping-motor-ble-adapter.ts`~~ | Bluetooth直接接続を廃止したため本アダプタは削除済み。SteppingMotorDriverのテレメトリは`control-app-client.ts`（§3.2/§3.5）が制御アプリのIPC中継から受信する |
 | [SteppingMotorDriver/monitor_app/src/renderer/trend-charts.js](../../SteppingMotorDriver/monitor_app/src/renderer/trend-charts.js) | `src/renderer/trend-charts.ts` | 既存の4チャートグループ構成（速度/位置・エンコーダ/偏差/電流・電圧）をそのまま流用し、ギア角度グループ（中継値・直接値・差分、最大4系列）を追加する。軸横断比較ビュー（F-RAM-GRAPH-02）用に、任意メトリック×最大12軸を1チャートに重畳するモードも同ファイルに追加する |
 | [multi_i2c_bridge/monitor_app/src/main/device-session.ts](../../multi_i2c_bridge/monitor_app/src/main/device-session.ts) | `src/main/adapters/multi-i2c-bridge-adapter.ts` | `EventEmitter` 継承クラスをほぼそのまま流用、`DeviceAdapter` インタフェースのメソッド名に合わせて薄いラッパーを被せる |
 | [multi_i2c_bridge/monitor_app/src/main/parser.ts](../../multi_i2c_bridge/monitor_app/src/main/parser.ts) | 同上ディレクトリへコピー | 行パーサはプロトコル固有ロジックのため変更不要 |
@@ -277,7 +276,7 @@ robot_arm_monitor/
 | 3 | bridge保守コマンドGUI化（F-RAM-GEAR-04） | Phase2完了 |
 | 4 | bridgeパラメータ設定画面、CSVログ記録（bridge分） | なし |
 | 5 | bridge単独運用版としてのパッケージ化（区切りが必要な場合） | Phase1〜4完了 |
-| 6 | `stepping-motor-ble-adapter.ts` 実装・単体接続確認 | §8(REQUIREMENTS) #8: ファームウェアBLE GATT仕様確定後 |
+| 6 | SteppingMotorDriverテレメトリ受信実装・単体接続確認（2026-08-09以降：`control-app-client.ts`の`telemetry`フレーム受信、旧`stepping-motor-ble-adapter.ts`方式から変更） | §8(REQUIREMENTS) #9: 制御アプリ・IPCプロトコル確定後 |
 | 7 | `control-app-client.ts` 実装、F-RAM-CTRL操作パネル（中継方式） | §8(REQUIREMENTS) #9: 制御アプリ・IPCプロトコル確定後 |
 | 8 | `device-manager.ts` の `RobotArmSnapshot` 合成ロジック（動的軸数）、統合ダッシュボードUI、ギア角度中継突合表示（F-RAM-GEAR-01〜03）、ESTOP集約 | Phase6・7完了 |
 | 9 | `trend-charts.ts` 拡張（軸詳細5チャートグループ＋軸横断比較ビュー、F-RAM-GRAPH-01/02）、複数基板同時接続の負荷確認 | Phase8完了 |
@@ -291,22 +290,17 @@ robot_arm_monitor/
 
 ### 9.1 本アプリの通信層への影響
 
-[§3](#3-デバイスアダプタ層) で定義した `DeviceAdapter` インタフェースは、`connect`/`disconnect`/`sendCommand`/`update`イベントのみを上位（`device-manager.ts`・renderer）に公開し、内部実装（USB `SerialPort` かBLEクライアントか）を隠蔽する設計になっている。そのため：
+[§3](#3-デバイスアダプタ層) で定義した `DeviceAdapter` インタフェースは、`connect`/`disconnect`/`sendCommand`/`update`イベントのみを上位（`device-manager.ts`・renderer）に公開し、内部実装（USB `SerialPort` か等）を隠蔽する設計になっている。そのため：
 
-- `BridgeAdapter`（§3.3、USB）と`StepBleAdapter`（§3.2、BLE）は同じ`DeviceAdapter`型として`device-manager.ts`から一様に扱える。
-- `StepBleAdapter`は書き込み系コマンドを持たない読み取り専用アダプタとして実装する（`sendCommand`は実質未使用）。
-- F-RAM-CTRLの書き込みコマンドは`DeviceAdapter`経路ではなく、別系統の`ControlAppClient`（§3.5）を通す。この分離により、将来SteppingMotorDriverのBLE接続が不安定化しても、モーション制御（制御アプリ・USB経由）には影響しない設計になっている。
+- `BridgeAdapter`（§3.3、USB）は`DeviceAdapter`型として`device-manager.ts`から扱える。SteppingMotorDriverは`DeviceAdapter`実装を持たず、`ControlAppClient`（§3.2/§3.5）が受信した`telemetry`フレームから直接`MotorSnapshot`を組み立てる。
+- F-RAM-CTRLの書き込みコマンドも、テレメトリ受信も、いずれも`ControlAppClient`（§3.5）を通す。制御アプリが未起動・無応答の場合はコマンド・テレメトリの両方が届かなくなる設計になっている（§3.2、[design/SYSTEM_REQUIREMENTS.md §6 #5](../../design/SYSTEM_REQUIREMENTS.md)の残存安全リスクと表裏）。
 
 ### 9.2 スコープ外事項
 
 以下は本書では規定しない（[design/SYSTEM_REQUIREMENTS.md §6](../../design/SYSTEM_REQUIREMENTS.md)の該当項目を参照）：
 
-- SteppingMotorDriverファームウェアのBLE GATTサービス設計（#1）
-- 制御アプリ本体・IPCプロトコルの詳細仕様（#2）
-- Bluetoothデバイス検出・ペアリングのUX（#3）
+- 制御アプリ本体・IPCプロトコルの詳細仕様（#2、テレメトリ中継部分は[CONTROL_APP_REQUIREMENTS.md §4.5](../../design/CONTROL_APP_REQUIREMENTS.md)で確定済み）
 - WiFi追加実装の用途・時期（#4）
-
-これらが確定した時点で、本書§3.2/§3.5の該当セクションを更新する。
 
 ---
 

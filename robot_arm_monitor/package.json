@@ -14,14 +14,13 @@
     "test:phase2": "npm run build && set ELECTRON_RUN_AS_NODE=&& electron test/phase2-smoke.cjs",
     "test:phase3": "npm run build && node test/phase3-smoke.cjs",
     "test:phase4": "npm run build && node test/phase4-smoke.cjs",
-    "test:phase6": "npm run build && set ELECTRON_RUN_AS_NODE=&& electron test/phase6-smoke.cjs",
     "test:phase7": "npm run build && node test/phase7-smoke.cjs",
     "test:phase8": "npm run build && node test/phase8-smoke.cjs",
-    "test:phase9": "npm run build && node test/phase9-smoke.cjs"
+    "test:phase9": "npm run build && node test/phase9-smoke.cjs",
+    "test:phase11": "npm run build && node test/phase11-smoke.cjs"
   },
   "dependencies": {
     "@serialport/parser-readline": "^13.0.0",
-    "@stoprocent/noble": "^2.5.9",
     "electron-store": "8.2.0",
     "serialport": "^13.0.0",
     "uplot": "^1.6.32"
@@ -51,8 +50,7 @@
       "!**/docs/**/*"
     ],
     "asarUnpack": [
-      "node_modules/@serialport/bindings-cpp/**/*",
-      "node_modules/@stoprocent/noble/prebuilds/**/*"
+      "node_modules/@serialport/bindings-cpp/**/*"
     ],
     "win": {
       "executableName": "RobotArmMonitor",

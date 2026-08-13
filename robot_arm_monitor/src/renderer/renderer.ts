@@ -1,5 +1,5 @@
 type AxisMappingEntry = import("../shared/types").AxisMappingEntry;
-type BleDeviceInfo = import("../shared/types").BleDeviceInfo;
+type BoardStatus = import("../shared/types").BoardStatus;
 type BridgeConfigRefreshResult = import("../shared/types").BridgeConfigRefreshResult;
 type BridgeLoggingState = import("../shared/types").BridgeLoggingState;
 type BridgeMaintenanceRequest = import("../shared/types").BridgeMaintenanceRequest;
@@ -12,6 +12,7 @@ type ControlEvent = import("../shared/types").ControlEvent;
 type CsvExportResult = import("../shared/types").CsvExportResult;
 type DeviceSnapshot = import("../shared/types").DeviceSnapshot;
 type EstopResult = import("../shared/types").EstopResult;
+type FaultTraceCapture = import("../shared/types").FaultTraceCapture;
 type MappingSettings = import("../shared/types").MappingSettings;
 type PortInfo = import("../shared/types").PortInfo;
 type RobotArmSnapshot = import("../shared/types").RobotArmSnapshot;
@@ -24,9 +25,6 @@ interface Window {
   robotArmApi: {
     listPorts(): Promise<PortInfo[]>;
     connect(port: PortInfo): Promise<ConnectResult>;
-    scanBleDevices(): Promise<BleDeviceInfo[]>;
-    connectBle(device: BleDeviceInfo): Promise<ConnectResult>;
-    openBluetoothSettings(): Promise<void>;
     disconnect(boardId: string): Promise<void>;
     executeBridgeMaintenance(
       boardId: string,
@@ -44,18 +42,19 @@ interface Window {
     sendSyncMove(requests: SyncMoveAxisRequest[]): Promise<CommandResult>;
     sendEstop(): Promise<EstopResult>;
     getRobotArmSnapshot(): Promise<RobotArmSnapshot>;
+    getControlAppBoards(): Promise<BoardStatus[]>;
     onDeviceUpdate(callback: (snapshot: DeviceSnapshot) => void): () => void;
     onBridgeLoggingUpdate(callback: (state: BridgeLoggingState) => void): () => void;
     onControlConnectionChanged(callback: (connected: boolean) => void): () => void;
     onControlEvent(callback: (event: ControlEvent) => void): () => void;
     onRobotArmUpdate(callback: (snapshot: RobotArmSnapshot) => void): () => void;
+    onControlAppBoardsChanged(callback: (boards: BoardStatus[]) => void): () => void;
+    onFaultTrace(callback: (capture: FaultTraceCapture) => void): () => void;
   };
 }
 
 const devices = new Map<string, DeviceSnapshot>();
 let ports = new Map<string, PortInfo>();
-let bleDevices = new Map<string, BleDeviceInfo>();
-let bleScanBusy = false;
 let selectedBoardId: string | undefined;
 let displayedSnapshot: DeviceSnapshot | undefined;
 let mappingSettings: MappingSettings = { axisMapping: [], boardLabels: {} };
@@ -63,14 +62,20 @@ let maintenanceBusy = false;
 let configBusy = false;
 let loggingState: BridgeLoggingState = { active: false, periodMs: 1000 };
 let controlConnected = false;
+let controlAppBoards: BoardStatus[] = [];
+let knownControlAppBoardIds = new Set<string>();
 let jogTimer: number | undefined;
 let jogging = false;
 let joggingAxis: number | undefined;
+const verificationJogs = new Map<number, { timer: number; pointerId: number }>();
+let verificationStructureSignature = "";
 let deviceTabsSignature = "";
 let robotSnapshot: RobotArmSnapshot = { axes: [], boards: [], controlAppConnected: false, timestamp: 0 };
 let dashboardView: "summary" | "detail" | "comparison" | "boards" = "summary";
 let trendDashboard: TrendCharts.RobotArmTrendDashboard;
 let trendPaused = false;
+let faultTraceViewer: FaultTracePanel.Viewer;
+const faultTraceStore = new FaultTracePanel.Store();
 let lastRawLogRenderAt = 0;
 let configComparisonSignature = "";
 let maintenanceSignature = "";
@@ -84,12 +89,6 @@ const esc = (value: unknown): string => String(value ?? "").replace(
 
 function setMessage(text: string, error = false): void {
   const element = $("message");
-  element.textContent = text;
-  element.className = error ? "message error" : "message";
-}
-
-function setBleMessage(text: string, error = false): void {
-  const element = $("ble-message");
   element.textContent = text;
   element.className = error ? "message error" : "message";
 }
@@ -153,6 +152,377 @@ function renderControlPanel(): void {
     setControlMessage("軸マッピングでMotor基板とローカル軸を割り当ててください。", true);
   } else if ($("control-message").classList.contains("error")) {
     setControlMessage("");
+  }
+}
+
+function setThresholdMessage(text: string, error = false): void {
+  const element = $("threshold-message");
+  element.textContent = text;
+  element.className = error ? "message error" : "message";
+}
+
+function thresholdMappings(): AxisMappingEntry[] {
+  return mappingSettings.axisMapping.filter(
+    mapping => mapping.motorBoardId !== undefined && mapping.motorLocalAxis !== undefined
+  );
+}
+
+function selectedThresholdAxis(): number | undefined {
+  const value = $<HTMLSelectElement>("threshold-axis").value;
+  return value === "" ? undefined : Number(value);
+}
+
+function renderThresholdPanel(): void {
+  const state = $("threshold-state");
+  state.textContent = controlConnected ? "制御アプリ接続済み" : "制御アプリ未接続";
+  state.className = `state ${controlConnected ? "monitoring" : "disconnected"}`;
+  const mappings = thresholdMappings();
+  const select = $<HTMLSelectElement>("threshold-axis");
+  const previous = select.value;
+  select.innerHTML = mappings.length
+    ? mappings.map(mapping => `
+      <option value="${mapping.axisId}">${esc(mapping.label || `Axis ${mapping.axisId}`)} · Axis ${mapping.axisId}</option>`).join("")
+    : `<option value="">モーター割当なし</option>`;
+  if (previous && mappings.some(mapping => String(mapping.axisId) === previous)) select.value = previous;
+  const ready = controlConnected && mappings.length > 0;
+  [
+    "threshold-stall-refresh", "threshold-stall-set",
+    "threshold-current-refresh", "threshold-current-set"
+  ].forEach(id => { $<HTMLButtonElement>(id).disabled = !ready; });
+  $<HTMLInputElement>("threshold-stall-input").disabled = !ready;
+  $<HTMLInputElement>("threshold-current-input").disabled = !ready;
+  if (!controlConnected) {
+    setThresholdMessage("制御アプリを起動すると閾値の取得・変更ができます。", true);
+  } else if (!mappings.length) {
+    setThresholdMessage("軸マッピングでMotor基板とローカル軸を割り当ててください。", true);
+  } else if ($("threshold-message").classList.contains("error")) {
+    setThresholdMessage("");
+  }
+  updateThresholdLiveValues();
+}
+
+function updateThresholdLiveValues(): void {
+  const axisId = selectedThresholdAxis();
+  const axis = axisId === undefined ? undefined : robotSnapshot.axes.find(item => item.axisId === axisId);
+  $("threshold-live-deviation").textContent = formatNumber(axis?.motor?.deviation, 0);
+  $("threshold-live-state").textContent = axis?.motor?.state ?? "—";
+  $("threshold-live-current").textContent = axis?.motor ? `${formatNumber(axis.motor.currentMa, 0)} mA` : "—";
+}
+
+async function thresholdGet(
+  command: "GET_STALL_FAULT" | "GET_CURRENT_LIMIT",
+  displayId: string
+): Promise<void> {
+  const axisId = selectedThresholdAxis();
+  if (axisId === undefined) {
+    setThresholdMessage("対象の論理軸を選択してください。", true);
+    return;
+  }
+  try {
+    const result = await window.robotArmApi.sendControlCommand({ logicalAxis: axisId, command });
+    if (result.ok) {
+      $(displayId).textContent = result.message ?? "—";
+      setThresholdMessage(`${command} · Axis ${axisId} → OK`);
+    } else {
+      setThresholdMessage(`${command} · Axis ${axisId} → ERR ${result.error ?? "UNKNOWN"}${result.message ? ` ${result.message}` : ""}`, true);
+    }
+  } catch (error) {
+    setThresholdMessage(`${command}失敗: ${errorText(error)}`, true);
+  }
+}
+
+async function thresholdSet(
+  command: "SET_STALL_FAULT" | "SET_CURRENT_LIMIT",
+  inputId: string,
+  displayId: string
+): Promise<void> {
+  const axisId = selectedThresholdAxis();
+  if (axisId === undefined) {
+    setThresholdMessage("対象の論理軸を選択してください。", true);
+    return;
+  }
+  const value = Number($<HTMLInputElement>(inputId).value);
+  if (!Number.isFinite(value) || value < 0) {
+    setThresholdMessage("0以上の数値を入力してください。", true);
+    return;
+  }
+  try {
+    const result = await window.robotArmApi.sendControlCommand({ logicalAxis: axisId, command, args: [value] });
+    if (result.ok) {
+      $(displayId).textContent = String(value);
+      setThresholdMessage(`${command} · Axis ${axisId} → OK`);
+    } else {
+      setThresholdMessage(`${command} · Axis ${axisId} → ERR ${result.error ?? "UNKNOWN"}${result.message ? ` ${result.message}` : ""}`, true);
+    }
+  } catch (error) {
+    setThresholdMessage(`${command}失敗: ${errorText(error)}`, true);
+  }
+}
+
+function setDriverSettingsMessage(text: string, error = false): void {
+  const element = $("driver-settings-message");
+  element.textContent = text;
+  element.className = error ? "message error" : "message";
+}
+
+function driverSettingsMappings(): AxisMappingEntry[] {
+  return thresholdMappings();
+}
+
+function selectedDriverSettingsAxis(): number | undefined {
+  const value = $<HTMLSelectElement>("driver-settings-axis").value;
+  return value === "" ? undefined : Number(value);
+}
+
+function renderDriverSettingsPanel(): void {
+  const state = $("driver-settings-state");
+  state.textContent = controlConnected ? "制御アプリ接続済み" : "制御アプリ未接続";
+  state.className = `state ${controlConnected ? "monitoring" : "disconnected"}`;
+  const mappings = driverSettingsMappings();
+  const select = $<HTMLSelectElement>("driver-settings-axis");
+  const previous = select.value;
+  select.innerHTML = mappings.length
+    ? mappings.map(mapping => `
+      <option value="${mapping.axisId}">${esc(mapping.label || `Axis ${mapping.axisId}`)} · Axis ${mapping.axisId}</option>`).join("")
+    : `<option value="">モーター割当なし</option>`;
+  if (previous && mappings.some(mapping => String(mapping.axisId) === previous)) select.value = previous;
+  const ready = controlConnected && mappings.length > 0;
+  ["driver-microstep-refresh", "driver-microstep-set"].forEach(id => { $<HTMLButtonElement>(id).disabled = !ready; });
+  $<HTMLSelectElement>("driver-microstep-input").disabled = !ready;
+  if (!controlConnected) {
+    setDriverSettingsMessage("制御アプリを起動すると設定の取得・変更ができます。", true);
+  } else if (!mappings.length) {
+    setDriverSettingsMessage("軸マッピングでMotor基板とローカル軸を割り当ててください。", true);
+  } else if ($("driver-settings-message").classList.contains("error")) {
+    setDriverSettingsMessage("");
+  }
+  renderGearRatioRows();
+  renderMotionProfileRows();
+}
+
+async function driverMicrostepGet(): Promise<void> {
+  const axisId = selectedDriverSettingsAxis();
+  if (axisId === undefined) {
+    setDriverSettingsMessage("対象の論理軸を選択してください。", true);
+    return;
+  }
+  try {
+    const result = await window.robotArmApi.sendControlCommand({ logicalAxis: axisId, command: "GET_MICROSTEP" });
+    if (result.ok) {
+      $("driver-microstep-current").textContent = result.message ?? "—";
+      if (result.message) $<HTMLSelectElement>("driver-microstep-input").value = result.message;
+      setDriverSettingsMessage(`GET_MICROSTEP · Axis ${axisId} → OK`);
+    } else {
+      setDriverSettingsMessage(`GET_MICROSTEP · Axis ${axisId} → ERR ${result.error ?? "UNKNOWN"}${result.message ? ` ${result.message}` : ""}`, true);
+    }
+  } catch (error) {
+    setDriverSettingsMessage(`GET_MICROSTEP失敗: ${errorText(error)}`, true);
+  }
+}
+
+async function driverMicrostepSet(): Promise<void> {
+  const axisId = selectedDriverSettingsAxis();
+  if (axisId === undefined) {
+    setDriverSettingsMessage("対象の論理軸を選択してください。", true);
+    return;
+  }
+  const value = Number($<HTMLSelectElement>("driver-microstep-input").value);
+  try {
+    const result = await window.robotArmApi.sendControlCommand({ logicalAxis: axisId, command: "SET_MICROSTEP", args: [value] });
+    if (result.ok) {
+      $("driver-microstep-current").textContent = String(value);
+      setDriverSettingsMessage(`SET_MICROSTEP · Axis ${axisId} → OK`);
+    } else {
+      setDriverSettingsMessage(`SET_MICROSTEP · Axis ${axisId} → ERR ${result.error ?? "UNKNOWN"}${result.message ? ` ${result.message}` : ""}`, true);
+    }
+  } catch (error) {
+    setDriverSettingsMessage(`SET_MICROSTEP失敗: ${errorText(error)}`, true);
+  }
+}
+
+function renderGearRatioRows(): void {
+  $("gear-ratio-rows").innerHTML = Array.from({ length: 12 }, (_, index) => {
+    const axisId = index + 1;
+    const mapping = verificationMapping(axisId);
+    const assigned = mapping.motorBoardId !== undefined && mapping.motorLocalAxis !== undefined;
+    const boardLabel = assigned ? (mappingSettings.boardLabels[mapping.motorBoardId!] || mapping.motorBoardId) : undefined;
+    const disabledAttr = !controlConnected || !assigned ? "disabled" : "";
+    return `
+      <tr data-gear-ratio-row="${axisId}">
+        <td><strong>${esc(mapping.label || `Axis ${axisId}`)}</strong><small>論理軸 ${axisId}</small></td>
+        <td>${assigned ? `${esc(boardLabel)} / Axis ${mapping.motorLocalAxis}` : "未割当"}</td>
+        <td><input data-gear-ratio-input="${axisId}" type="number" min="0.01" step="0.1" value="1" ${disabledAttr}></td>
+        <td class="gear-ratio-actions">
+          <button data-gear-ratio-get="${axisId}" ${disabledAttr}>取得</button>
+          <button data-gear-ratio-set="${axisId}" ${disabledAttr}>設定</button>
+          <button data-gear-ratio-save="${axisId}" ${disabledAttr}>NVS保存</button>
+        </td>
+      </tr>`;
+  }).join("");
+  bindGearRatioControls();
+}
+
+function bindGearRatioControls(): void {
+  document.querySelectorAll<HTMLButtonElement>("[data-gear-ratio-get]").forEach(button => {
+    button.onclick = () => void gearRatioGet(Number(button.dataset.gearRatioGet));
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-gear-ratio-set]").forEach(button => {
+    button.onclick = () => void gearRatioSet(Number(button.dataset.gearRatioSet));
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-gear-ratio-save]").forEach(button => {
+    button.onclick = () => {
+      const axisId = Number(button.dataset.gearRatioSave);
+      if (window.confirm(`論理軸 ${axisId} の基板の設定（全軸分）をNVSに保存します。続行しますか？`)) {
+        void sendJointCommand(axisId, "SAVE");
+      }
+    };
+  });
+}
+
+async function gearRatioGet(axisId: number): Promise<void> {
+  try {
+    const result = await window.robotArmApi.sendControlCommand({ logicalAxis: axisId, command: "GET_GEAR_RATIO" });
+    if (result.ok && result.message) {
+      const input = document.querySelector<HTMLInputElement>(`[data-gear-ratio-input="${axisId}"]`);
+      if (input) input.value = result.message;
+    }
+    setDriverSettingsMessage(
+      result.ok
+        ? `GET_GEAR_RATIO · Axis ${axisId} → OK${result.message ? ` ${result.message}` : ""}`
+        : `GET_GEAR_RATIO · Axis ${axisId} → ERR ${result.error ?? "UNKNOWN"}${result.message ? ` ${result.message}` : ""}`,
+      !result.ok
+    );
+  } catch (error) {
+    setDriverSettingsMessage(`GET_GEAR_RATIO失敗: ${errorText(error)}`, true);
+  }
+}
+
+async function gearRatioSet(axisId: number): Promise<void> {
+  const ratio = Number(document.querySelector<HTMLInputElement>(`[data-gear-ratio-input="${axisId}"]`)?.value);
+  if (!Number.isFinite(ratio) || ratio <= 0) {
+    setDriverSettingsMessage("ギア比は0より大きい数値で入力してください。", true);
+    return;
+  }
+  try {
+    const result = await window.robotArmApi.sendControlCommand({ logicalAxis: axisId, command: "SET_GEAR_RATIO", args: [ratio] });
+    setDriverSettingsMessage(
+      result.ok
+        ? `SET_GEAR_RATIO · Axis ${axisId} → OK`
+        : `SET_GEAR_RATIO · Axis ${axisId} → ERR ${result.error ?? "UNKNOWN"}${result.message ? ` ${result.message}` : ""}`,
+      !result.ok
+    );
+  } catch (error) {
+    setDriverSettingsMessage(`SET_GEAR_RATIO失敗: ${errorText(error)}`, true);
+  }
+}
+
+function renderMotionProfileRows(): void {
+  $("motion-profile-rows").innerHTML = Array.from({ length: 12 }, (_, index) => {
+    const axisId = index + 1;
+    const mapping = verificationMapping(axisId);
+    const assigned = mapping.motorBoardId !== undefined && mapping.motorLocalAxis !== undefined;
+    const boardLabel = assigned ? (mappingSettings.boardLabels[mapping.motorBoardId!] || mapping.motorBoardId) : undefined;
+    const disabledAttr = !controlConnected || !assigned ? "disabled" : "";
+    return `
+      <tr data-motion-profile-row="${axisId}">
+        <td><strong>${esc(mapping.label || `Axis ${axisId}`)}</strong><small>論理軸 ${axisId}</small></td>
+        <td>${assigned ? `${esc(boardLabel)} / Axis ${mapping.motorLocalAxis}` : "未割当"}</td>
+        <td><input data-motion-vmax="${axisId}" type="number" min="1" max="200000" step="1" ${disabledAttr}></td>
+        <td><input data-motion-accel="${axisId}" type="number" min="1" step="1" ${disabledAttr}></td>
+        <td><input data-motion-decel="${axisId}" type="number" min="1" step="1" ${disabledAttr}></td>
+        <td class="motion-profile-actions">
+          <button data-motion-get="${axisId}" ${disabledAttr}>取得</button>
+          <button data-motion-set="${axisId}" ${disabledAttr}>設定</button>
+        </td>
+      </tr>`;
+  }).join("");
+  bindMotionProfileControls();
+}
+
+function bindMotionProfileControls(): void {
+  document.querySelectorAll<HTMLButtonElement>("[data-motion-get]").forEach(button => {
+    button.onclick = () => void motionProfileGet(Number(button.dataset.motionGet));
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-motion-set]").forEach(button => {
+    button.onclick = () => void motionProfileSet(Number(button.dataset.motionSet));
+  });
+}
+
+async function motionProfileGet(axisId: number): Promise<void> {
+  const fields: Array<["GET_VMAX" | "GET_ACCEL" | "GET_DECEL", string]> = [
+    ["GET_VMAX", "data-motion-vmax"], ["GET_ACCEL", "data-motion-accel"], ["GET_DECEL", "data-motion-decel"]
+  ];
+  for (const [command, attr] of fields) {
+    try {
+      const result = await window.robotArmApi.sendControlCommand({ logicalAxis: axisId, command });
+      if (result.ok && result.message) {
+        const input = document.querySelector<HTMLInputElement>(`[${attr}="${axisId}"]`);
+        if (input) input.value = result.message;
+      } else if (!result.ok) {
+        setDriverSettingsMessage(`${command} · Axis ${axisId} → ERR ${result.error ?? "UNKNOWN"}${result.message ? ` ${result.message}` : ""}`, true);
+        return;
+      }
+    } catch (error) {
+      setDriverSettingsMessage(`${command}失敗: ${errorText(error)}`, true);
+      return;
+    }
+  }
+  setDriverSettingsMessage(`モーションプロファイル取得 · Axis ${axisId} → OK`);
+}
+
+async function motionProfileSet(axisId: number): Promise<void> {
+  const vmax = Number(document.querySelector<HTMLInputElement>(`[data-motion-vmax="${axisId}"]`)?.value);
+  const accel = Number(document.querySelector<HTMLInputElement>(`[data-motion-accel="${axisId}"]`)?.value);
+  const decel = Number(document.querySelector<HTMLInputElement>(`[data-motion-decel="${axisId}"]`)?.value);
+  if (![vmax, accel, decel].every(value => Number.isFinite(value) && value > 0)) {
+    setDriverSettingsMessage("VMAX/ACCEL/DECELはすべて0より大きい整数で入力してください。", true);
+    return;
+  }
+  const steps: Array<[ControlCommandRequest["command"], number]> = [
+    ["SET_VMAX", vmax], ["SET_ACCEL", accel], ["SET_DECEL", decel]
+  ];
+  for (const [command, value] of steps) {
+    try {
+      const result = await window.robotArmApi.sendControlCommand({ logicalAxis: axisId, command, args: [value] });
+      if (!result.ok) {
+        setDriverSettingsMessage(`${command} · Axis ${axisId} → ERR ${result.error ?? "UNKNOWN"}${result.message ? ` ${result.message}` : ""}`, true);
+        return;
+      }
+    } catch (error) {
+      setDriverSettingsMessage(`${command}失敗: ${errorText(error)}`, true);
+      return;
+    }
+  }
+  setDriverSettingsMessage(`モーションプロファイル · Axis ${axisId} → OK`);
+}
+
+async function autoLoadDriverSettings(): Promise<void> {
+  if (!controlConnected) return;
+  const mappings = driverSettingsMappings();
+  if (!mappings.length) return;
+  const axisId = selectedDriverSettingsAxis() ?? mappings[0].axisId;
+  try {
+    const result = await window.robotArmApi.sendControlCommand({ logicalAxis: axisId, command: "GET_MICROSTEP" });
+    if (result.ok && result.message) {
+      $("driver-microstep-current").textContent = result.message;
+      $<HTMLSelectElement>("driver-microstep-input").value = result.message;
+    }
+  } catch {
+    // Best-effort auto-load; manual refresh remains available if this fails.
+  }
+  for (const mapping of mappings) {
+    try {
+      const result = await window.robotArmApi.sendControlCommand({ logicalAxis: mapping.axisId, command: "GET_GEAR_RATIO" });
+      if (result.ok && result.message) {
+        const input = document.querySelector<HTMLInputElement>(`[data-gear-ratio-input="${mapping.axisId}"]`);
+        if (input) input.value = result.message;
+      }
+    } catch {
+      // Best-effort auto-load; manual refresh remains available if this fails.
+    }
+  }
+  for (const mapping of mappings) {
+    await motionProfileGet(mapping.axisId);
   }
 }
 
@@ -267,6 +637,183 @@ function stopJog(sendStop = true): void {
   }
 }
 
+function setJointCardMessage(axisId: number, text: string, error = false): void {
+  const element = document.querySelector<HTMLElement>(`[data-verify-message="${axisId}"]`);
+  if (!element) return;
+  element.textContent = text;
+  element.className = error ? "joint-card-message error" : "joint-card-message";
+}
+
+async function sendJointCommand(
+  axisId: number,
+  command: ControlCommandRequest["command"],
+  args?: unknown[],
+  ensureEnabled = false
+): Promise<void> {
+  try {
+    if (ensureEnabled) {
+      await window.robotArmApi.sendControlCommand({ logicalAxis: axisId, command: "ENABLE" });
+    }
+    const result = await window.robotArmApi.sendControlCommand({ logicalAxis: axisId, command, args });
+    setJointCardMessage(
+      axisId,
+      result.ok
+        ? `${command} → OK${result.message ? ` ${result.message}` : ""}`
+        : `${command} → ERR ${result.error ?? "UNKNOWN"}${result.message ? ` ${result.message}` : ""}`,
+      !result.ok
+    );
+  } catch (error) {
+    setJointCardMessage(axisId, `${command}失敗: ${errorText(error)}`, true);
+  }
+}
+
+function verificationMapping(axisId: number): AxisMappingEntry {
+  return mappingSettings.axisMapping.find(item => item.axisId === axisId)
+    ?? { axisId, label: `Axis ${axisId}` };
+}
+
+function renderJointVerificationPanel(forceStructure = false): void {
+  const mappings = Array.from({ length: 12 }, (_, index) => verificationMapping(index + 1));
+  const signature = JSON.stringify({
+    controlConnected,
+    axes: mappings.map(item => [item.axisId, item.label, item.motorBoardId, item.motorLocalAxis])
+  });
+  if (forceStructure || signature !== verificationStructureSignature) {
+    stopAllVerificationJogs(false);
+    verificationStructureSignature = signature;
+    $("joint-verify-grid").innerHTML = mappings.map(mapping => {
+      const assigned = mapping.motorBoardId !== undefined && mapping.motorLocalAxis !== undefined;
+      const boardLabel = assigned
+        ? mappingSettings.boardLabels[mapping.motorBoardId!] || mapping.motorBoardId
+        : "未割当";
+      return `
+        <article class="joint-verify-card ${assigned ? "" : "unassigned"}" data-verify-card="${mapping.axisId}">
+          <div class="joint-verify-heading">
+            <div><h3>${esc(mapping.label || `Axis ${mapping.axisId}`)}</h3><small>論理軸 ${mapping.axisId}</small></div>
+            <span class="joint-verify-assignment">${assigned ? `${esc(boardLabel)} / Axis ${mapping.motorLocalAxis}` : "未割当"}</span>
+          </div>
+          <dl class="joint-values">
+            <div><dt>POT 生角度</dt><dd data-verify-value="${mapping.axisId}:potDegRaw">${assigned ? "未対応" : "未割当"}</dd></div>
+            <div><dt>POT ゼロ補正</dt><dd data-verify-value="${mapping.axisId}:potDegZeroed">${assigned ? "未対応" : "未割当"}</dd></div>
+            <div><dt>エンコーダ角度</dt><dd data-verify-value="${mapping.axisId}:encDeg">${assigned ? "未対応" : "未割当"}</dd></div>
+            <div><dt>ドライバ角度</dt><dd data-verify-value="${mapping.axisId}:posDeg">${assigned ? "未対応" : "未割当"}</dd></div>
+          </dl>
+          <fieldset class="joint-verify-controls" ${!controlConnected || !assigned ? "disabled" : ""}>
+            <button class="joint-recover-button" data-verify-recover="${mapping.axisId}">FAULT復帰（CLEAR_FAULT+ENABLE）</button>
+            <div class="joint-mode-row"><label>操作モード</label><select data-verify-mode="${mapping.axisId}"><option value="angle">角度移動</option><option value="continuous">連続</option></select></div>
+            <div data-verify-angle="${mapping.axisId}">
+              <div class="joint-input-row"><label>刻み (°)</label><input data-verify-step="${mapping.axisId}" type="number" min="0.001" step="0.1" value="1"></div>
+              <div class="joint-action-row"><button data-verify-move="-${mapping.axisId}">− 移動</button><button data-verify-move="${mapping.axisId}">＋ 移動</button></div>
+            </div>
+            <div data-verify-continuous="${mapping.axisId}" hidden>
+              <div class="joint-input-row"><label>速度 (steps/s)</label><input data-verify-speed="${mapping.axisId}" type="number" min="1" step="1" value="1000"></div>
+              <div class="joint-action-row"><button data-verify-jog="-${mapping.axisId}">− 押下中</button><button data-verify-jog="${mapping.axisId}">＋ 押下中</button></div>
+            </div>
+            <div class="joint-input-row"><label>絶対角度 (°)</label><input data-verify-target="${mapping.axisId}" type="number" step="0.1" value="0"></div>
+            <button data-verify-moveto="${mapping.axisId}">MOVETO_DEG</button>
+            <div class="joint-zero-row"><button data-verify-zero-set="${mapping.axisId}">POTゼロ設定</button><button data-verify-zero-clear="${mapping.axisId}">POTゼロ解除</button></div>
+          </fieldset>
+          <p class="joint-card-message" data-verify-message="${mapping.axisId}"></p>
+        </article>`;
+    }).join("");
+    bindJointVerificationControls();
+  }
+  updateJointVerificationValues();
+}
+
+function updateJointVerificationValues(): void {
+  for (let axisId = 1; axisId <= 12; axisId++) {
+    const mapping = verificationMapping(axisId);
+    const assigned = mapping.motorBoardId !== undefined && mapping.motorLocalAxis !== undefined;
+    const joint = robotSnapshot.axes.find(axis => axis.axisId === axisId)?.jointAngle;
+    for (const field of ["potDegRaw", "potDegZeroed", "encDeg", "posDeg"] as const) {
+      const element = document.querySelector<HTMLElement>(`[data-verify-value="${axisId}:${field}"]`);
+      if (!element) continue;
+      const value = joint?.[field];
+      element.textContent = !assigned ? "未割当" : value === null || value === undefined ? "未対応" : `${value.toFixed(3)}°`;
+    }
+  }
+}
+
+function bindJointVerificationControls(): void {
+  document.querySelectorAll<HTMLSelectElement>("[data-verify-mode]").forEach(select => {
+    select.onchange = () => {
+      const axisId = Number(select.dataset.verifyMode);
+      document.querySelector<HTMLElement>(`[data-verify-angle="${axisId}"]`)!.hidden = select.value !== "angle";
+      document.querySelector<HTMLElement>(`[data-verify-continuous="${axisId}"]`)!.hidden = select.value !== "continuous";
+      if (select.value !== "continuous") stopVerificationJog(axisId);
+    };
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-verify-move]").forEach(button => {
+    button.onclick = () => {
+      const signedAxis = Number(button.dataset.verifyMove);
+      const axisId = Math.abs(signedAxis);
+      const step = Number(document.querySelector<HTMLInputElement>(`[data-verify-step="${axisId}"]`)?.value);
+      if (!Number.isFinite(step) || step <= 0) return setJointCardMessage(axisId, "刻み角度は0より大きい数値で入力してください。", true);
+      void sendJointCommand(axisId, "MOVE_DEG", [Math.sign(signedAxis) * step], true);
+    };
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-verify-jog]").forEach(button => {
+    button.onpointerdown = event => {
+      event.preventDefault();
+      const signedAxis = Number(button.dataset.verifyJog);
+      startVerificationJog(Math.abs(signedAxis), Math.sign(signedAxis) as -1 | 1, event.pointerId);
+    };
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-verify-moveto]").forEach(button => {
+    button.onclick = () => {
+      const axisId = Number(button.dataset.verifyMoveto);
+      const target = Number(document.querySelector<HTMLInputElement>(`[data-verify-target="${axisId}"]`)?.value);
+      if (!Number.isFinite(target)) return setJointCardMessage(axisId, "絶対角度を数値で入力してください。", true);
+      void sendJointCommand(axisId, "MOVETO_DEG", [target], true);
+    };
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-verify-recover]").forEach(button => {
+    button.onclick = () => void sendJointCommand(Number(button.dataset.verifyRecover), "RECOVER");
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-verify-zero-set]").forEach(button => {
+    button.onclick = () => {
+      const axisId = Number(button.dataset.verifyZeroSet);
+      if (window.confirm(`論理軸 ${axisId} の現在POT角度をゼロとして設定します。続行しますか？`)) {
+        void sendJointCommand(axisId, "POT_ZERO_SET");
+      }
+    };
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-verify-zero-clear]").forEach(button => {
+    button.onclick = () => void sendJointCommand(Number(button.dataset.verifyZeroClear), "POT_ZERO_CLEAR");
+  });
+}
+
+function startVerificationJog(axisId: number, direction: -1 | 1, pointerId: number): void {
+  if (!controlConnected || verificationJogs.has(axisId)) return;
+  const speed = Number(document.querySelector<HTMLInputElement>(`[data-verify-speed="${axisId}"]`)?.value);
+  if (!Number.isSafeInteger(speed) || speed <= 0) {
+    setJointCardMessage(axisId, "速度は1以上の整数で入力してください。", true);
+    return;
+  }
+  const issue = (): void => void sendJointCommand(axisId, "VEL", [direction * speed], true);
+  issue();
+  verificationJogs.set(axisId, { timer: window.setInterval(issue, 300), pointerId });
+}
+
+function stopVerificationJog(axisId: number, sendStop = true): void {
+  const jog = verificationJogs.get(axisId);
+  if (!jog) return;
+  window.clearInterval(jog.timer);
+  verificationJogs.delete(axisId);
+  if (sendStop && controlConnected) void sendJointCommand(axisId, "STOP");
+}
+
+function stopVerificationJogsForPointer(pointerId: number): void {
+  for (const [axisId, jog] of verificationJogs) {
+    if (jog.pointerId === pointerId) stopVerificationJog(axisId);
+  }
+}
+
+function stopAllVerificationJogs(sendStop = true): void {
+  for (const axisId of [...verificationJogs.keys()]) stopVerificationJog(axisId, sendStop);
+}
+
 async function executeSyncMove(boardId: string): Promise<void> {
   const mappings = mappingSettings.axisMapping.filter(mapping => mapping.motorBoardId === boardId);
   const requests: SyncMoveAxisRequest[] = mappings.flatMap(mapping => {
@@ -319,18 +866,32 @@ function renderEstopResults(result: EstopResult): void {
 }
 
 function onControlConnectionChanged(connected: boolean): void {
+  const becameConnected = connected && !controlConnected;
   controlConnected = connected;
-  if (!connected) stopJog(false);
+  if (!connected) {
+    stopJog(false);
+    stopAllVerificationJogs(false);
+  }
   renderControlPanel();
+  renderThresholdPanel();
+  renderDriverSettingsPanel();
+  renderJointVerificationPanel();
+  updateWindowTitle();
+  if (becameConnected) void autoLoadDriverSettings();
 }
 
 function onRobotArmUpdate(snapshot: RobotArmSnapshot): void {
   robotSnapshot = snapshot;
   trendDashboard.add(snapshot);
+  const becameConnected = snapshot.controlAppConnected && !controlConnected;
   const controlStateChanged = controlConnected !== snapshot.controlAppConnected;
   controlConnected = snapshot.controlAppConnected;
-  if (controlStateChanged) renderControlPanel();
+  if (controlStateChanged) { renderControlPanel(); renderThresholdPanel(); renderDriverSettingsPanel(); }
+  updateThresholdLiveValues();
   renderIntegratedDashboard();
+  renderJointVerificationPanel();
+  updateWindowTitle();
+  if (becameConnected) void autoLoadDriverSettings();
 }
 
 function renderIntegratedDashboard(): void {
@@ -370,6 +931,82 @@ function renderIntegratedDashboard(): void {
   $("dashboard-updated").textContent = robotSnapshot.timestamp
     ? `最終更新 ${new Date(robotSnapshot.timestamp).toLocaleTimeString("ja-JP", { hour12: false, fractionalSecondDigits: 3 })}`
     : "データ待機中";
+  renderErrorPanel();
+}
+
+function renderErrorPanel(): void {
+  $("error-panel-grid").innerHTML = robotSnapshot.axes.length
+    ? robotSnapshot.axes.map(renderErrorPanelCard).join("")
+    : `<p class="empty">軸マッピングを設定するか、基板を接続してください。</p>`;
+}
+
+function renderErrorPanelCard(axis: AxisSnapshot): string {
+  const faulted = Boolean(axis.motor?.errorCode);
+  const commCell = (label: string, ok: boolean | undefined, text: string): string =>
+    `<div><span class="comm-dot ${ok ? "ok" : "ng"}"></span>${esc(label)} <strong>${esc(text)}</strong></div>`;
+  return `<article class="error-card ${faulted ? "faulted" : ""}">
+    <h3>${esc(axis.axisLabel)}<small>${axis.axisId === null ? "未割当" : `Axis ${axis.axisId}`}</small></h3>
+    <div class="error-row error-row-code">
+      <div><span>Error Code</span><strong>${esc(axis.motor?.errorCode ?? "—")}</strong></div>
+      <div><span>Error理由</span><strong>${esc(axis.motor?.errorReason ?? "正常")}</strong></div>
+    </div>
+    <div class="error-row error-row-angle">
+      <div><span>センサ角度</span><strong>${formatAngle(axis.jointAngle?.potDegZeroed)}</strong></div>
+      <div><span>エンコーダー角度</span><strong>${formatAngle(axis.jointAngle?.encDeg)}</strong></div>
+    </div>
+    <div class="error-row error-row-power">
+      <div><span>PWM出力</span><strong>${axis.motor?.holdCurrentPercent === undefined ? "—" : `${axis.motor.holdCurrentPercent}%`}</strong></div>
+      <div><span>電源電圧</span><strong>${formatNumber(axis.motor?.voltageV, 2)} V</strong></div>
+      <div><span>電源電流</span><strong>${formatNumber(axis.motor?.currentMa, 0)} mA</strong></div>
+    </div>
+    <div class="error-row error-row-comm">
+      ${commCell("I2C通信状態", axis.comm?.i2c === "OK", axis.comm?.i2c ?? "—")}
+      ${commCell("USB通信状態", axis.comm?.usb === "monitoring", axis.comm?.usb ?? "—")}
+      ${commCell("BLE通信状態", axis.comm?.ble === "CONNECTED", axis.comm?.ble ?? "—")}
+    </div>
+  </article>`;
+}
+
+function onFaultTrace(capture: FaultTraceCapture): void {
+  faultTraceStore.add(capture);
+  renderFaultTraceSelect();
+  const select = $<HTMLSelectElement>("fault-trace-select");
+  select.value = "0";
+  renderFaultTraceSelected();
+}
+
+function renderFaultTraceSelect(): void {
+  const select = $<HTMLSelectElement>("fault-trace-select");
+  const previous = select.value;
+  select.innerHTML = faultTraceStore.captures.length
+    ? faultTraceStore.captures.map((capture, index) => {
+        const time = new Date(capture.capturedAt).toLocaleTimeString("ja-JP", { hour12: false });
+        const reason = capture.reason ? ` · ${capture.reason}` : "";
+        return `<option value="${index}">${time} · ${esc(capture.axisLabel)}${esc(reason)}</option>`;
+      }).join("")
+    : `<option value="">キャプチャなし</option>`;
+  if (previous && Number(previous) < faultTraceStore.captures.length) select.value = previous;
+}
+
+function renderFaultTraceSelected(): void {
+  const value = $<HTMLSelectElement>("fault-trace-select").value;
+  const summary = $("fault-trace-summary");
+  const capture = value === "" ? undefined : faultTraceStore.get(Number(value));
+  if (!capture) {
+    summary.className = "fault-trace-summary empty";
+    summary.textContent = "キャプチャを選択してください。";
+    return;
+  }
+  summary.className = "fault-trace-summary";
+  const time = new Date(capture.capturedAt).toLocaleTimeString("ja-JP", { hour12: false, fractionalSecondDigits: 3 });
+  summary.innerHTML = [
+    `<span>取得時刻</span>${esc(time)}`,
+    `<span>軸</span>${esc(capture.axisLabel)}`,
+    `<span>基板</span>${esc(capture.boardId)} / Axis ${capture.localAxis}`,
+    `<span>理由</span>${esc(capture.reason ?? "—")}`,
+    `<span>サンプル数</span>${capture.samples.length} 件 (${capture.intervalMs}ms間隔)`
+  ].join("");
+  faultTraceViewer.show(capture);
 }
 
 function renderDashboardAxisRow(
@@ -437,7 +1074,7 @@ function renderBoardRawCards(): void {
     const label = mappingSettings.boardLabels[snapshot.boardId] || snapshot.boardId;
     if (snapshot.kind === "stepping_motor_driver") {
       const motor = snapshot as MotorSnapshot;
-      return `<article class="board-raw-card"><h3>${esc(label)} <small>Motor · BLE</small></h3>
+      return `<article class="board-raw-card"><h3>${esc(label)} <small>Motor · USB(制御アプリ)</small></h3>
         <table><thead><tr><th>Axis</th><th>State</th><th>Pos</th><th>Vel</th><th>Enc</th><th>Gear</th></tr></thead><tbody>${motor.axes.map(item => {
           const gear = motor.gear.find(value => value.axis === item.axis);
           return `<tr><td>${item.axis}</td><td>${esc(item.state)}</td><td>${item.pos}</td><td>${item.vel}</td><td>${item.enc}</td><td>${formatAngle(gear?.angleDeg)} · ${esc(gear?.state ?? "—")}</td></tr>`;
@@ -456,6 +1093,22 @@ function formatNumber(value: number | undefined, digits: number): string {
 
 function formatAngle(value: number | null | undefined): string {
   return value === null || value === undefined ? "—" : `${value.toFixed(2)}°`;
+}
+
+function switchAppTab(tab: "connection" | "motor" | "monitor" | "threshold" | "settings"): void {
+  $<HTMLElement>("tab-connection").hidden = tab !== "connection";
+  $<HTMLElement>("tab-motor").hidden = tab !== "motor";
+  $<HTMLElement>("tab-monitor").hidden = tab !== "monitor";
+  $<HTMLElement>("tab-threshold").hidden = tab !== "threshold";
+  $<HTMLElement>("tab-settings").hidden = tab !== "settings";
+  document.querySelectorAll<HTMLButtonElement>("[data-app-tab]").forEach(button => {
+    button.classList.toggle("active", button.dataset.appTab === tab);
+  });
+  if (tab === "threshold") renderThresholdPanel();
+  if (tab === "settings") {
+    renderDriverSettingsPanel();
+    void autoLoadDriverSettings();
+  }
 }
 
 function switchDashboardView(view: "summary" | "detail" | "comparison" | "boards"): void {
@@ -488,16 +1141,25 @@ async function refreshPorts(): Promise<void> {
     ports = new Map(list.map(port => [port.path, port]));
     const activePaths = new Set([...devices.values()].map(device => device.path));
     $("port-count").textContent = String(list.length);
-    $("ports").innerHTML = list.length ? list.map(port => `
+    $("ports").innerHTML = list.length ? list.map(port => {
+      const steppingMotor = port.kindHint === "stepping_motor_driver";
+      const active = activePaths.has(port.path);
+      const portType = port.candidate
+        ? "bridge候補 · VID 2e8a"
+        : steppingMotor
+          ? "SteppingMotorDriver · 制御アプリで接続"
+          : "その他";
+      return `
       <article class="port ${port.candidate ? "candidate" : ""}">
         <div><strong>${esc(port.path)}</strong><small>${esc(port.manufacturer || "Serial device")}</small></div>
         <div class="port-actions">
-          <span>${port.candidate ? "bridge候補 · VID 2e8a" : "その他"}</span>
-          <button data-connect="${esc(port.path)}" ${activePaths.has(port.path) ? "disabled" : ""}>
-            ${activePaths.has(port.path) ? "接続済み" : "接続"}
+          <span>${portType}</span>
+          <button data-connect="${esc(port.path)}" ${active || steppingMotor ? "disabled" : ""}>
+            ${active ? "接続済み" : steppingMotor ? "制御アプリを使用" : "接続"}
           </button>
         </div>
-      </article>`).join("") : `<p class="empty">シリアルポートが見つかりません。</p>`;
+      </article>`;
+    }).join("") : `<p class="empty">シリアルポートが見つかりません。</p>`;
     document.querySelectorAll<HTMLButtonElement>("[data-connect]").forEach(button => {
       button.onclick = () => void connect(button.dataset.connect!);
     });
@@ -513,6 +1175,10 @@ async function connect(path: string): Promise<void> {
     return;
   }
   const info = ports.get(path) ?? { path, friendlyName: path, candidate: false };
+  if (info.kindHint === "stepping_motor_driver") {
+    setMessage(`${path}はSteppingMotorDriverです。監視・モーション制御ともにControl Appから接続してください。`, true);
+    return;
+  }
   setMessage(`${path} で identity と status を確認しています…`);
   try {
     const result = await window.robotArmApi.connect(info);
@@ -533,81 +1199,6 @@ async function connect(path: string): Promise<void> {
     renderDevices();
   } finally {
     await refreshPorts();
-  }
-}
-
-async function scanBleDevices(): Promise<void> {
-  if (bleScanBusy) return;
-  bleScanBusy = true;
-  $<HTMLButtonElement>("ble-scan").disabled = true;
-  $("ble-devices").innerHTML = `<p class="empty">5秒間スキャンしています…</p>`;
-  setBleMessage("SteppingMotorDriverのテレメトリService UUIDを検索しています…");
-  try {
-    const list = await window.robotArmApi.scanBleDevices();
-    bleDevices = new Map(list.map(device => [device.path, device]));
-    renderBleDevices();
-    setBleMessage(
-      list.length
-        ? `${list.length}台のSteppingMotorDriver候補が見つかりました。`
-        : "候補は見つかりませんでした。基板の電源とBluetoothを確認してください。"
-    );
-  } catch (error) {
-    bleDevices.clear();
-    renderBleDevices();
-    setBleMessage(`BLEスキャン失敗: ${errorText(error)}`, true);
-  } finally {
-    bleScanBusy = false;
-    $<HTMLButtonElement>("ble-scan").disabled = false;
-  }
-}
-
-function renderBleDevices(): void {
-  const activePaths = new Set([...devices.values()].map(device => device.path));
-  const candidates = [...bleDevices.values()];
-  $("ble-count").textContent = String(candidates.length);
-  $("ble-devices").innerHTML = candidates.length ? candidates.map(device => `
-    <article class="port candidate ble-device">
-      <div>
-        <strong>${esc(device.name)}</strong>
-        <small>Board ID ${esc(device.boardId)} · RSSI ${device.rssi} dBm</small>
-      </div>
-      <div class="port-actions">
-        <span>${esc(device.address ?? "Windows BLE ID")}</span>
-        <button data-ble-connect="${esc(device.path)}" ${activePaths.has(device.path) ? "disabled" : ""}>
-          ${activePaths.has(device.path) ? "接続済み" : "接続"}
-        </button>
-      </div>
-    </article>`).join("") : `<p class="empty">「BLEをスキャン」で候補を検索してください。</p>`;
-  document.querySelectorAll<HTMLButtonElement>("[data-ble-connect]").forEach(button => {
-    button.onclick = () => void connectBle(button.dataset.bleConnect!);
-  });
-}
-
-async function connectBle(path: string): Promise<void> {
-  const info = bleDevices.get(path);
-  if (!info) {
-    setBleMessage("BLE候補を再スキャンしてください。", true);
-    return;
-  }
-  setBleMessage(`${info.name}へ接続し、Device Infoを検証しています…`);
-  try {
-    const result = await window.robotArmApi.connectBle(info);
-    selectedBoardId = result.boardId;
-    displayedSnapshot = devices.get(result.boardId);
-    setBleMessage(`${info.name} (${result.boardId}) に接続しました。`);
-    renderDevices();
-    renderSelectedDevice();
-    renderBleDevices();
-    renderMapping();
-  } catch (error) {
-    for (const [boardId, snapshot] of devices) {
-      if (snapshot.path === path && (snapshot.state === "error" || snapshot.state === "timeout")) {
-        devices.delete(boardId);
-      }
-    }
-    setBleMessage(`BLE接続失敗: ${errorText(error)}`, true);
-    renderDevices();
-    renderBleDevices();
   }
 }
 
@@ -646,15 +1237,13 @@ function onDeviceUpdate(snapshot: DeviceSnapshot): void {
   }
   renderDevices();
   if (selectedDeviceChanged) renderSelectedDevice(false);
-  if (deviceSetChanged) {
-    renderMapping();
-    renderBleDevices();
-  }
+  if (deviceSetChanged) renderMapping();
   if (snapshot.kind === "multi_i2c_bridge") renderConfigComparison();
 }
 
 function renderDevices(): void {
   const connected = [...devices.values()].sort((a, b) => a.boardId.localeCompare(b.boardId));
+  updateWindowTitle();
   const signature = connected.map(device => [
     device.boardId,
     mappingSettings.boardLabels[device.boardId] || device.boardId,
@@ -675,7 +1264,7 @@ function renderDevices(): void {
       data-device="${esc(device.boardId)}"
     >
       <strong>${esc(mappingSettings.boardLabels[device.boardId] || device.boardId)}</strong>
-      <small>${device.kind === "stepping_motor_driver" ? "Motor · BLE" : "Bridge · USB"} · ${esc(device.state)}</small>
+      <small>${device.kind === "stepping_motor_driver" ? "Motor · USB(制御アプリ)" : "Bridge · USB"} · ${esc(device.state)}</small>
     </button>`).join("") : `<p class="empty">接続中の基板はありません。</p>`;
   document.querySelectorAll<HTMLButtonElement>("[data-device]").forEach(button => {
     button.onclick = () => selectDeviceTab(button.dataset.device);
@@ -693,6 +1282,11 @@ function renderDevices(): void {
   const selectedTab = selectedBoardId ? document.getElementById(`device-tab-${selectedBoardId}`) : null;
   if (selectedTab) panel.setAttribute("aria-labelledby", selectedTab.id);
   else panel.removeAttribute("aria-labelledby");
+}
+
+function updateWindowTitle(): void {
+  const controlState = controlConnected ? "制御接続" : "制御未接続";
+  document.title = `Robot Arm Monitor (${devices.size} boards · ${controlState})`;
 }
 
 function selectDeviceTab(boardId: string | undefined): void {
@@ -1018,7 +1612,13 @@ function renderMapping(): void {
 
 function boardOptions(kind: DeviceSnapshot["kind"], selected?: string): string {
   const boardIds = new Set<string>();
-  for (const device of devices.values()) if (device.kind === kind) boardIds.add(device.boardId);
+  if (kind === "stepping_motor_driver") {
+    // Motor boards are selected by their USB identity in control_app; telemetry arrives
+    // automatically via the control_app IPC connection for any board it has connected.
+    for (const board of controlAppBoards) boardIds.add(board.boardId);
+  } else {
+    for (const device of devices.values()) if (device.kind === kind) boardIds.add(device.boardId);
+  }
   for (const mapping of mappingSettings.axisMapping) {
     const boardId = kind === "multi_i2c_bridge" ? mapping.bridgeBoardId : mapping.motorBoardId;
     if (boardId) boardIds.add(boardId);
@@ -1028,9 +1628,17 @@ function boardOptions(kind: DeviceSnapshot["kind"], selected?: string): string {
     `<option value="">未割当</option>`,
     ...[...boardIds].sort().map(boardId => `
       <option value="${esc(boardId)}" ${selected === boardId ? "selected" : ""}>
-        ${esc(mappingSettings.boardLabels[boardId] || boardId)}
+        ${esc(mappingSettings.boardLabels[boardId] || boardId)}${esc(boardStatusSuffix(kind, boardId))}
       </option>`)
   ].join("");
+}
+
+function boardStatusSuffix(kind: DeviceSnapshot["kind"], boardId: string): string {
+  if (kind !== "stepping_motor_driver") return "";
+  const device = devices.get(boardId);
+  if (device?.kind === "stepping_motor_driver" && device.state === "monitoring") return " (テレメトリ受信中)";
+  if (controlAppBoards.some(board => board.boardId === boardId)) return " (USB検出/テレメトリ待ち)";
+  return " (未接続)";
 }
 
 function channelOptions(selected?: number): string {
@@ -1043,6 +1651,7 @@ function channelOptions(selected?: number): string {
 function collectKnownBoardIds(): string[] {
   const result = new Set<string>(Object.keys(mappingSettings.boardLabels));
   for (const device of devices.values()) result.add(device.boardId);
+  for (const board of controlAppBoards) result.add(board.boardId);
   for (const mapping of mappingSettings.axisMapping) {
     if (mapping.motorBoardId) result.add(mapping.motorBoardId);
     if (mapping.bridgeBoardId) result.add(mapping.bridgeBoardId);
@@ -1088,6 +1697,15 @@ async function saveMapping(): Promise<void> {
   document.querySelectorAll<HTMLInputElement>("[data-board-label]").forEach(input => {
     boardLabels[input.dataset.boardLabel!] = input.value.trim();
   });
+  const incomplete = axisMapping.find(
+    mapping =>
+      (mapping.motorBoardId !== undefined) !== (mapping.motorLocalAxis !== undefined)
+      || (mapping.bridgeBoardId !== undefined) !== (mapping.bridgeLocalChannel !== undefined)
+  );
+  if (incomplete) {
+    setMappingMessage(`Axis ${incomplete.axisId}: 基板を選んだ側は「軸」または「CH」も選択してください。`, true);
+    return;
+  }
   try {
     mappingSettings = await window.robotArmApi.saveMappingSettings({ axisMapping, boardLabels });
     robotSnapshot = await window.robotArmApi.getRobotArmSnapshot();
@@ -1096,6 +1714,9 @@ async function saveMapping(): Promise<void> {
     renderMapping();
     renderConfigComparison();
     renderControlPanel();
+    renderThresholdPanel();
+    renderDriverSettingsPanel();
+    renderJointVerificationPanel(true);
     renderIntegratedDashboard();
   } catch (error) {
     setMappingMessage(`保存失敗: ${errorText(error)}`, true);
@@ -1111,16 +1732,29 @@ async function init(): Promise<void> {
     gear: $("trend-gear"),
     comparison: $("trend-comparison")
   });
+  faultTraceViewer = new FaultTracePanel.Viewer(window.uPlot, {
+    position: $("fault-trace-position"),
+    diff: $("fault-trace-diff"),
+    velocity: $("fault-trace-velocity"),
+    current: $("fault-trace-current")
+  });
+  $<HTMLSelectElement>("fault-trace-select").onchange = () => renderFaultTraceSelected();
+  window.robotArmApi.onFaultTrace(onFaultTrace);
   window.robotArmApi.onDeviceUpdate(onDeviceUpdate);
   window.robotArmApi.onBridgeLoggingUpdate(onBridgeLoggingUpdate);
   window.robotArmApi.onControlConnectionChanged(onControlConnectionChanged);
   window.robotArmApi.onControlEvent(onControlEvent);
   window.robotArmApi.onRobotArmUpdate(onRobotArmUpdate);
-  $("refresh").onclick = () => void refreshPorts();
-  $("ble-scan").onclick = () => void scanBleDevices();
-  $("ble-settings").onclick = () => void window.robotArmApi.openBluetoothSettings().catch(error => {
-    setBleMessage(`Bluetooth設定を開けませんでした: ${errorText(error)}`, true);
+  window.robotArmApi.onControlAppBoardsChanged(boards => {
+    const boardIds = new Set(boards.map(board => board.boardId));
+    const newlyConnected = [...boardIds].some(boardId => !knownControlAppBoardIds.has(boardId));
+    knownControlAppBoardIds = boardIds;
+    controlAppBoards = boards;
+    renderMapping();
+    renderDriverSettingsPanel();
+    if (newlyConnected) void autoLoadDriverSettings();
   });
+  $("refresh").onclick = () => void refreshPorts();
   $("manual-connect").onclick = () => void connect($<HTMLInputElement>("manual-port").value.trim());
   $("save-mapping").onclick = () => void saveMapping();
   $("refresh-config").onclick = () => void refreshBridgeConfigs();
@@ -1135,9 +1769,19 @@ async function init(): Promise<void> {
   $("send-move").onclick = () => void executeMove("MOVE", "move-steps");
   $("send-moveto").onclick = () => void executeMove("MOVETO", "moveto-position");
   $("control-estop").onclick = () => void executeEstop();
+  $("threshold-axis").onchange = () => updateThresholdLiveValues();
+  $("threshold-stall-refresh").onclick = () => void thresholdGet("GET_STALL_FAULT", "threshold-stall-current");
+  $("threshold-stall-set").onclick = () => void thresholdSet("SET_STALL_FAULT", "threshold-stall-input", "threshold-stall-current");
+  $("threshold-current-refresh").onclick = () => void thresholdGet("GET_CURRENT_LIMIT", "threshold-current-current");
+  $("threshold-current-set").onclick = () => void thresholdSet("SET_CURRENT_LIMIT", "threshold-current-input", "threshold-current-current");
+  $("driver-microstep-refresh").onclick = () => void driverMicrostepGet();
+  $("driver-microstep-set").onclick = () => void driverMicrostepSet();
   $("dashboard-axis-select").onchange = () => renderAxisDetail();
   document.querySelectorAll<HTMLButtonElement>("[data-dashboard-view]").forEach(button => {
     button.onclick = () => switchDashboardView(button.dataset.dashboardView as typeof dashboardView);
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-app-tab]").forEach(button => {
+    button.onclick = () => switchAppTab(button.dataset.appTab as Parameters<typeof switchAppTab>[0]);
   });
   document.querySelectorAll<HTMLButtonElement>("[data-trend-window]").forEach(button => {
     button.onclick = () => {
@@ -1172,9 +1816,18 @@ async function init(): Promise<void> {
     event.preventDefault();
     startJog(1);
   };
-  document.addEventListener("pointerup", () => stopJog());
-  document.addEventListener("pointercancel", () => stopJog());
-  window.addEventListener("blur", () => stopJog());
+  document.addEventListener("pointerup", event => {
+    stopJog();
+    stopVerificationJogsForPointer(event.pointerId);
+  });
+  document.addEventListener("pointercancel", event => {
+    stopJog();
+    stopVerificationJogsForPointer(event.pointerId);
+  });
+  window.addEventListener("blur", () => {
+    stopJog();
+    stopAllVerificationJogs();
+  });
   document.querySelectorAll<HTMLButtonElement>("[data-maintenance]").forEach(button => {
     button.onclick = () => void executeMaintenance({
       action: button.dataset.maintenance as BridgeMaintenanceRequest["action"]
@@ -1193,7 +1846,6 @@ async function init(): Promise<void> {
     renderMaintenance();
     renderMapping();
     renderConfigComparison();
-    renderBleDevices();
     await refreshPorts();
   };
 
@@ -1201,6 +1853,12 @@ async function init(): Promise<void> {
     mappingSettings = await window.robotArmApi.getMappingSettings();
   } catch (error) {
     setMappingMessage(`設定読込失敗: ${errorText(error)}`, true);
+  }
+  try {
+    controlAppBoards = await window.robotArmApi.getControlAppBoards();
+    knownControlAppBoardIds = new Set(controlAppBoards.map(board => board.boardId));
+  } catch (error) {
+    setMappingMessage(`制御アプリの基板一覧取得失敗: ${errorText(error)}`, true);
   }
   try {
     loggingState = await window.robotArmApi.getBridgeLoggingState();
@@ -1224,10 +1882,13 @@ async function init(): Promise<void> {
   renderMapping();
   renderConfigComparison();
   renderLoggingState();
-  renderBleDevices();
   renderControlPanel();
+  renderThresholdPanel();
+  renderDriverSettingsPanel();
+  renderJointVerificationPanel(true);
   renderIntegratedDashboard();
   await refreshPorts();
+  if (controlConnected) void autoLoadDriverSettings();
 }
 
 void init().catch(error => {

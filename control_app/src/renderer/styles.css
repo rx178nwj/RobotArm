@@ -1,0 +1,30 @@
+:root { color-scheme: dark; font-family: Inter, "Segoe UI", sans-serif; background: #10151d; color: #e9eef7; }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; display: flex; flex-direction: column; }
+header { display: flex; align-items: center; justify-content: space-between; padding: 28px 36px; border-bottom: 1px solid #283241; background: #151c26; }
+h1, h2, p { margin: 0; }
+h1 { font-size: 30px; letter-spacing: -.02em; }
+h2 { font-size: 16px; font-weight: 650; }
+.eyebrow { color: #7c91ac; font-size: 11px; letter-spacing: .18em; margin-bottom: 5px; }
+.status { display: flex; align-items: center; gap: 9px; padding: 9px 13px; border: 1px solid #303c4c; border-radius: 999px; color: #aab8c9; font-size: 13px; }
+.status span { width: 8px; height: 8px; border-radius: 50%; background: #6d7886; box-shadow: 0 0 12px currentColor; }
+.status.connected { color: #64ddb3; border-color: #245d4d; background: #132a25; }
+.status.connected span { background: #52d8a9; }
+main { width: min(1100px, 100%); margin: 0 auto; padding: 30px 36px; display: grid; gap: 24px; flex: 1; }
+section { background: #151c26; border: 1px solid #283241; border-radius: 12px; overflow: hidden; }
+.section-title { display: flex; justify-content: space-between; padding: 15px 18px; border-bottom: 1px solid #283241; }
+.section-title span { color: #718198; font-size: 12px; }
+.boards { padding: 14px; display: grid; gap: 8px; }
+.board-card { display: grid; grid-template-columns: 1.1fr 1fr auto; align-items: center; gap: 18px; padding: 13px 15px; border-radius: 8px; background: #1b2430; }
+.board-card strong { font-family: "Cascadia Mono", monospace; font-size: 13px; }
+.board-card span { color: #91a0b4; font-family: "Cascadia Mono", monospace; font-size: 12px; }
+.board-card em { color: #64ddb3; font-size: 11px; font-style: normal; text-transform: uppercase; }
+.log-section { min-height: 260px; }
+.logs { height: 260px; overflow: auto; font-family: "Cascadia Mono", monospace; font-size: 12px; }
+.log-row { display: grid; grid-template-columns: 78px 55px 1fr; gap: 10px; padding: 7px 18px; border-bottom: 1px solid #202936; }
+.log-row time { color: #65758a; }
+.log-row b { color: #77a9e8; font-weight: 600; }
+.log-row span { color: #bdc8d6; overflow-wrap: anywhere; }
+.empty { color: #65758a; padding: 24px; text-align: center; font-size: 13px; }
+footer { text-align: center; padding: 16px; color: #59697e; font-size: 11px; border-top: 1px solid #202936; }
+@media (max-width: 700px) { header, main { padding-left: 20px; padding-right: 20px; } .board-card { grid-template-columns: 1fr; gap: 5px; } }

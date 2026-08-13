@@ -1,6 +1,6 @@
 import { SerialPort } from "serialport";
 import type {
-  BleDeviceInfo,
+  BoardStatus,
   BridgeConfigRefreshResult,
   BridgeMaintenanceRequest,
   BridgeMaintenanceResult,
@@ -11,6 +11,9 @@ import type {
   DeviceSnapshot,
   EstopResult,
   AxisSnapshot,
+  FaultTraceCapture,
+  GearRelayState,
+  MotorAxisStatus,
   MotorSnapshot,
   RobotArmSnapshot,
   PortInfo,
@@ -18,16 +21,11 @@ import type {
   SyncMoveAxisRequest
 } from "../shared/types";
 import type { AxisMappingStore } from "./axis-mapping";
-import type { ControlAppClient } from "./adapters/control-app-client";
+import type { ControlAppClient, RawFaultTraceCapture } from "./adapters/control-app-client";
 import { MultiI2cBridgeAdapter } from "./adapters/multi-i2c-bridge-adapter";
 import type { DeviceAdapter } from "./adapters/device-adapter";
 import { VID_HINT } from "./adapters/device-adapter";
 import { identifyPort, makeProbeLog } from "./adapters/port-identity";
-import {
-  scanSteppingMotorBleDevices,
-  SteppingMotorBleAdapter,
-  stopSteppingMotorBleCentral
-} from "./adapters/stepping-motor-ble-adapter";
 
 export class DeviceManager {
   private readonly adapters = new Map<string, DeviceAdapter>();
@@ -38,13 +36,36 @@ export class DeviceManager {
   private loggingSnapshot?: (snapshot: BridgeSnapshot) => void;
   private loggingError?: (message: string) => void;
   private readonly loggingErrorBoards = new Set<string>();
+  private controlAppBoards: BoardStatus[] = [];
 
   constructor(
     private readonly onUpdate: (snapshot: DeviceSnapshot) => void,
     private readonly controlClient: ControlAppClient,
     private readonly mappingStore: AxisMappingStore,
-    private readonly onRobotArmUpdate?: (snapshot: RobotArmSnapshot) => void
-  ) {}
+    private readonly onRobotArmUpdate?: (snapshot: RobotArmSnapshot) => void,
+    private readonly onFaultTrace?: (capture: FaultTraceCapture) => void
+  ) {
+    this.controlAppBoards = controlClient.boards;
+    controlClient.on("boardsChanged", boards => {
+      this.controlAppBoards = boards;
+      const connected = new Set(boards.filter(board => board.state === "connected").map(board => board.boardId));
+      for (const [boardId, snapshot] of this.latestSnapshots) {
+        if (snapshot.kind !== "stepping_motor_driver" || snapshot.state === "disconnected") continue;
+        if (!connected.has(boardId)) this.latestSnapshots.set(boardId, { ...snapshot, state: "disconnected" });
+      }
+      this.publishRobotArmSnapshot();
+    });
+    controlClient.on("telemetry", snapshot => {
+      this.latestSnapshots.set(snapshot.boardId, snapshot);
+      this.onUpdate(snapshot);
+      this.publishRobotArmSnapshot();
+    });
+    controlClient.on("faultTrace", raw => this.onFaultTrace?.(this.resolveFaultTrace(raw)));
+  }
+
+  getControlAppBoards(): BoardStatus[] {
+    return this.controlAppBoards;
+  }
 
   getRobotArmSnapshot(): RobotArmSnapshot {
     return composeRobotArmSnapshot(
@@ -123,49 +144,6 @@ export class DeviceManager {
         kindHint
       };
     });
-  }
-
-  async scanBleDevices(durationMs = 5000): Promise<BleDeviceInfo[]> {
-    return scanSteppingMotorBleDevices(durationMs);
-  }
-
-  async connectBle(info: BleDeviceInfo, periodMs = 100): Promise<ConnectResult> {
-    if (this.boardByPath.has(info.path) || this.connectingPaths.has(info.path)) {
-      throw new Error(`${info.name} is already connected or connecting`);
-    }
-    this.connectingPaths.add(info.path);
-    const adapter = new SteppingMotorBleAdapter();
-    adapter.on("update", snapshot => {
-      if (snapshot.boardId !== "unidentified") this.latestSnapshots.set(snapshot.boardId, snapshot);
-      if (snapshot.state === "disconnected" && snapshot.boardId !== "unidentified") {
-        this.boardByPath.delete(snapshot.path);
-        if (this.adapters.get(snapshot.boardId) === adapter) this.adapters.delete(snapshot.boardId);
-      }
-      this.onUpdate(snapshot);
-      this.publishRobotArmSnapshot();
-    });
-
-    try {
-      await adapter.connect(info.path, periodMs);
-      if (adapter.boardId !== info.boardId) {
-        throw new Error(
-          `Advertising名のboard_id (${info.boardId}) とDevice Info (${adapter.boardId}) が一致しません`
-        );
-      }
-      if (this.adapters.has(adapter.boardId)) {
-        throw new Error(`Board ${adapter.boardId} is already connected`);
-      }
-      this.adapters.set(adapter.boardId, adapter);
-      this.boardByPath.set(info.path, adapter.boardId);
-      return { boardId: adapter.boardId };
-    } catch (error) {
-      adapter.removeAllListeners("update");
-      if (adapter.boardId !== "unidentified") this.latestSnapshots.delete(adapter.boardId);
-      adapter.disconnect();
-      throw error;
-    } finally {
-      this.connectingPaths.delete(info.path);
-    }
   }
 
   async connect(info: PortInfo, periodMs = 100): Promise<ConnectResult> {
@@ -332,9 +310,26 @@ export class DeviceManager {
     this.adapters.clear();
     this.boardByPath.clear();
     this.connectingPaths.clear();
-    stopSteppingMotorBleCentral();
     const close = (this.controlClient as ControlAppClient & { close?: () => void }).close;
     close?.call(this.controlClient);
+  }
+
+  private resolveFaultTrace(raw: RawFaultTraceCapture): FaultTraceCapture {
+    const settings = this.mappingStore.get();
+    const mapping = settings.axisMapping.find(entry =>
+      entry.motorBoardId === raw.boardId && entry.motorLocalAxis === raw.localAxis
+    );
+    const boardLabel = settings.boardLabels[raw.boardId] || raw.boardId;
+    return {
+      boardId: raw.boardId,
+      localAxis: raw.localAxis,
+      axisLabel: mapping ? mapping.label : `未割当 (${boardLabel} / Axis ${raw.localAxis})`,
+      logicalAxisId: mapping?.axisId ?? null,
+      intervalMs: raw.intervalMs,
+      capturedAt: raw.capturedAt,
+      ...(raw.reason ? { reason: raw.reason } : {}),
+      samples: raw.samples
+    };
   }
 
   private resolveMotorAxis(logicalAxisValue: unknown): {
@@ -370,6 +365,7 @@ export function composeRobotArmSnapshot(
       ? motorSnapshot.axes.find(item => item.axis === mapping.motorLocalAxis)
       : undefined;
     if (motor && motorSnapshot) {
+      const { errorCode, errorReason } = axisFaultDisplay(motor, motorSnapshot);
       axis.motor = {
         boardId: motorSnapshot.boardId,
         localAxis: motor.axis,
@@ -379,9 +375,23 @@ export function composeRobotArmSnapshot(
         deviation: motor.pos - motor.enc,
         velocity: motor.vel,
         currentMa: motorSnapshot.power?.current_mA ?? 0,
-        voltageV: (motorSnapshot.power?.voltage_mV ?? 0) / 1000
+        voltageV: (motorSnapshot.power?.voltage_mV ?? 0) / 1000,
+        ...(errorCode ? { errorCode, errorReason } : {}),
+        ...(motorSnapshot.holdCurrentPercent === undefined ? {} : { holdCurrentPercent: motorSnapshot.holdCurrentPercent })
       };
+      const jointAngle = (motorSnapshot.jointAngle ?? []).find(item => item.axis === mapping.motorLocalAxis);
+      if (jointAngle) {
+        axis.jointAngle = {
+          boardId: motorSnapshot.boardId,
+          localAxis: jointAngle.axis,
+          posDeg: jointAngle.posDeg,
+          encDeg: jointAngle.encDeg,
+          potDegRaw: jointAngle.potDegRaw,
+          potDegZeroed: jointAngle.potDegZeroed
+        };
+      }
       const relayed = motorSnapshot.gear.find(item => item.axis === mapping.motorLocalAxis);
+      const relayedStatus: GearRelayState = relayed?.state ?? "UNAVAILABLE";
       if (relayed) {
         axis.gearRelayed = {
           boardId: motorSnapshot.boardId,
@@ -397,6 +407,11 @@ export function composeRobotArmSnapshot(
           deviationDeg: null
         };
       }
+      axis.comm = {
+        usb: motorSnapshot.state,
+        i2c: relayedStatus,
+        ble: motorSnapshot.bleStatus ?? "UNKNOWN"
+      };
     }
     const bridgeSnapshot = mapping.bridgeBoardId
       ? byId.get(mapping.bridgeBoardId)
@@ -444,6 +459,8 @@ export function composeRobotArmSnapshot(
     const motorBoard = snapshot as MotorSnapshot;
     for (const motor of motorBoard.axes) {
       if (axes.length >= 12 || assignedMotors.has(`${snapshot.boardId}:${motor.axis}`)) continue;
+      const { errorCode, errorReason } = axisFaultDisplay(motor, motorBoard);
+      const relayed = motorBoard.gear.find(item => item.axis === motor.axis);
       axes.push({
         axisId: null,
         axisLabel: `未割当 (${settings.boardLabels[snapshot.boardId] || snapshot.boardId} / Axis ${motor.axis})`,
@@ -456,7 +473,14 @@ export function composeRobotArmSnapshot(
           deviation: motor.pos - motor.enc,
           velocity: motor.vel,
           currentMa: motorBoard.power?.current_mA ?? 0,
-          voltageV: (motorBoard.power?.voltage_mV ?? 0) / 1000
+          voltageV: (motorBoard.power?.voltage_mV ?? 0) / 1000,
+          ...(errorCode ? { errorCode, errorReason } : {}),
+          ...(motorBoard.holdCurrentPercent === undefined ? {} : { holdCurrentPercent: motorBoard.holdCurrentPercent })
+        },
+        comm: {
+          usb: motorBoard.state,
+          i2c: relayed?.state ?? "UNAVAILABLE",
+          ble: motorBoard.bleStatus ?? "UNKNOWN"
         }
       });
     }
@@ -492,6 +516,29 @@ export function composeRobotArmSnapshot(
     controlAppConnected,
     timestamp
   };
+}
+
+/**
+ * A faulted axis carries no per-axis error code from the firmware (EVT FAULT / GET FAULT_INFO
+ * report one board-wide reason for the whole axis_mask). The display code below is a UI-only
+ * label derived from that reason, not a SteppingMotorDriver Exxx protocol code.
+ */
+export function axisFaultDisplay(
+  motor: MotorAxisStatus,
+  motorSnapshot: MotorSnapshot
+): { errorCode?: string; errorReason?: string } {
+  const reason = motorSnapshot.fault?.reason;
+  if (motor.state !== "FAULT" || !reason || reason === "NONE") return {};
+  return { errorCode: faultDisplayCode(reason), errorReason: reason };
+}
+
+function faultDisplayCode(reason: string): string {
+  switch (reason) {
+    case "ESTOP": return "ESTOP-1";
+    case "OVERCURRENT": return "OC-1";
+    case "STALL": return "STALL-1";
+    default: return `${reason}-1`;
+  }
 }
 
 export function shortestAngleDifference(relayedDeg: number, directDeg: number): number {
@@ -550,6 +597,38 @@ function validMotionValue(value: unknown, field: string): number {
   return number;
 }
 
+function validFiniteValue(value: unknown, field: string): number {
+  const number = Number(value);
+  if (!Number.isFinite(number)) throw new Error(`${field} must be a finite number`);
+  return number;
+}
+
+function validNonNegativeInt(value: unknown, field: string): number {
+  const number = Number(value);
+  if (!Number.isInteger(number) || number < 0) throw new Error(`${field} must be a non-negative integer`);
+  return number;
+}
+
+function validPositiveFiniteValue(value: unknown, field: string): number {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) throw new Error(`${field} must be a positive finite number`);
+  return number;
+}
+
+function validPositiveInt(value: unknown, field: string): number {
+  const number = Number(value);
+  if (!Number.isSafeInteger(number) || number <= 0) throw new Error(`${field} must be a positive integer`);
+  return number;
+}
+
+const VALID_MICROSTEPS = new Set([1, 2, 4, 8, 16, 32]);
+
+function validMicrostep(value: unknown): number {
+  const number = Number(value);
+  if (!VALID_MICROSTEPS.has(number)) throw new Error("Microstep must be one of 1, 2, 4, 8, 16, 32");
+  return number;
+}
+
 function validateControlArgs(
   command: ControlCommandRequest["command"],
   args: unknown[] | undefined
@@ -562,12 +641,56 @@ function validateControlArgs(
         throw new Error(`${command} requires exactly one argument`);
       }
       return [validMotionValue(args[0], `${command} value`)];
+    case "MOVE_DEG":
+    case "MOVETO_DEG":
+      if (!Array.isArray(args) || args.length !== 1) {
+        throw new Error(`${command} requires exactly one argument`);
+      }
+      return [validFiniteValue(args[0], `${command} value`)];
+    case "SET_GEAR_RATIO":
+      if (!Array.isArray(args) || args.length !== 1) {
+        throw new Error(`${command} requires exactly one argument`);
+      }
+      return [validFiniteValue(args[0], `${command} value`)];
+    case "SET_STALL_FAULT":
+      if (!Array.isArray(args) || args.length !== 1) {
+        throw new Error(`${command} requires exactly one argument`);
+      }
+      return [validNonNegativeInt(args[0], `${command} value`)];
+    case "SET_CURRENT_LIMIT":
+      if (!Array.isArray(args) || args.length !== 1) {
+        throw new Error(`${command} requires exactly one argument`);
+      }
+      return [validPositiveFiniteValue(args[0], `${command} value`)];
+    case "SET_MICROSTEP":
+      if (!Array.isArray(args) || args.length !== 1) {
+        throw new Error(`${command} requires exactly one argument`);
+      }
+      return [validMicrostep(args[0])];
+    case "SET_VMAX":
+    case "SET_ACCEL":
+    case "SET_DECEL":
+      if (!Array.isArray(args) || args.length !== 1) {
+        throw new Error(`${command} requires exactly one argument`);
+      }
+      return [validPositiveInt(args[0], `${command} value`)];
     case "ENABLE":
     case "DISABLE":
     case "STOP":
     case "STOP_FREE":
     case "CLEAR_FAULT":
     case "HOME":
+    case "POT_ZERO_SET":
+    case "POT_ZERO_CLEAR":
+    case "GET_GEAR_RATIO":
+    case "GET_STALL_FAULT":
+    case "GET_CURRENT_LIMIT":
+    case "GET_MICROSTEP":
+    case "GET_VMAX":
+    case "GET_ACCEL":
+    case "GET_DECEL":
+    case "SAVE":
+    case "RECOVER":
       if (args !== undefined && args.length !== 0) throw new Error(`${command} does not accept arguments`);
       return undefined;
     default:

@@ -1,7 +1,6 @@
-import { app, BrowserWindow, ipcMain, shell } from "electron";
+import { app, BrowserWindow, ipcMain } from "electron";
 import path from "node:path";
 import type {
-  BleDeviceInfo,
   BridgeMaintenanceRequest,
   ControlCommandRequest,
   MappingSettings,
@@ -12,20 +11,19 @@ import { NamedPipeControlAppClient } from "./adapters/control-app-client";
 import { AxisMappingStore } from "./axis-mapping";
 import { CsvLogger } from "./csv-logger";
 import { DeviceManager } from "./device-manager";
+import { ErrorLogger } from "./error-logger";
 
 let window: BrowserWindow | null = null;
 let mappingStore: AxisMappingStore;
 let manager: DeviceManager;
 const csvLogger = new CsvLogger();
+const errorLogger = new ErrorLogger();
 const controlClient = new NamedPipeControlAppClient();
 let loggingWriteFailed = false;
 
 function registerIpc(): void {
   ipcMain.handle("ports:list", () => manager.listPorts());
   ipcMain.handle("device:connect", (_event, info: PortInfo) => manager.connect(info, 100));
-  ipcMain.handle("ble:scan", () => manager.scanBleDevices());
-  ipcMain.handle("ble:connect", (_event, info: BleDeviceInfo) => manager.connectBle(info, 100));
-  ipcMain.handle("ble:open-settings", () => shell.openExternal("ms-settings:bluetooth"));
   ipcMain.handle("device:disconnect", (_event, boardId: string) => manager.disconnect(boardId));
   ipcMain.handle(
     "bridge:maintenance",
@@ -84,29 +82,48 @@ function registerIpc(): void {
   ipcMain.handle("control:state", () => manager.controlAppConnected);
   ipcMain.handle(
     "control:command",
-    (_event, request: ControlCommandRequest) => manager.executeControlCommand(request)
+    async (_event, request: ControlCommandRequest) => {
+      try {
+        const result = await manager.executeControlCommand(request);
+        errorLogger.logCommandResult(request, `axis${request.logicalAxis}`, request.logicalAxis, result);
+        return result;
+      } catch (error) {
+        errorLogger.logCommandException(request, error);
+        throw error;
+      }
+    }
   );
   ipcMain.handle(
     "control:sync-move",
     (_event, requests: SyncMoveAxisRequest[]) => manager.executeSyncMove(requests)
   );
   ipcMain.handle("control:estop", () => manager.sendEstop());
+  ipcMain.handle("control:boards", () => manager.getControlAppBoards());
 }
 
 app.whenReady().then(() => {
+  console.log(`[error-logger] writing error/fault events to ${errorLogger.getFilePath()}`);
   mappingStore = new AxisMappingStore();
   manager = new DeviceManager(
-    snapshot => window?.webContents.send("device:update", snapshot),
+    snapshot => {
+      errorLogger.observeSnapshot(snapshot);
+      window?.webContents.send("device:update", snapshot);
+    },
     controlClient,
     mappingStore,
-    snapshot => window?.webContents.send("robot-arm:update", snapshot)
+    snapshot => window?.webContents.send("robot-arm:update", snapshot),
+    capture => window?.webContents.send("control:fault-trace", capture)
   );
   controlClient.on("connectionChanged", connected => {
     window?.webContents.send("control:connection-changed", connected);
     manager.publishRobotArmSnapshot();
   });
   controlClient.on("controlEvent", event => {
+    errorLogger.logControlEvent(event);
     window?.webContents.send("control:event", event);
+  });
+  controlClient.on("boardsChanged", boards => {
+    window?.webContents.send("control:boards-changed", boards);
   });
   registerIpc();
   window = new BrowserWindow({

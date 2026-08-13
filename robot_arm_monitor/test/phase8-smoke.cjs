@@ -2,10 +2,6 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { composeRobotArmSnapshot, shortestAngleDifference } = require("../dist/main/device-manager.js");
-const {
-  SMD_GEAR_ANGLE_UUID,
-  stopSteppingMotorBleCentral
-} = require("../dist/main/adapters/stepping-motor-ble-adapter.js");
 
 function motorSnapshot() {
   return {
@@ -20,7 +16,8 @@ function motorSnapshot() {
     gear: [
       { axis: 0, angleDeg: 359, state: "OK" },
       { axis: 1, angleDeg: 20, state: "OK" }
-    ]
+    ],
+    jointAngle: []
   };
 }
 
@@ -42,7 +39,6 @@ function bridgeSnapshot() {
 }
 
 function main() {
-  assert.equal(SMD_GEAR_ANGLE_UUID, "7c9e10056a3d4b89a7125f4e8d2c0100");
   assert.equal(shortestAngleDifference(359, 1), -2);
   assert.equal(shortestAngleDifference(1, 359), 2);
   const settings = {
@@ -77,7 +73,6 @@ function main() {
   assert.match(renderer, /onRobotArmUpdate/);
   assert.match(renderer, /判定停止中/);
   console.log("PHASE8_DASHBOARD_SMOKE_OK");
-  stopSteppingMotorBleCentral();
 }
 
 main();

@@ -258,6 +258,62 @@ multi_i2c_bridgeに追加された確認用コマンド `ch <0..5> angle`（[usb
 - 通信切断時は当該基板・当該論理軸の操作UIを無効化する。
 - ギア角度モニタ（multi_i2c_bridge系統）の異常は、モーター制御・安全機構（ESTOP・過電流保護・通信ウォッチドッグ）に影響を与えない旨をUI上に明示する（[GEAR_ANGLE_MONITOR_REQUIREMENTS.md §4.7](../SteppingMotorDriver/firmware/GEAR_ANGLE_MONITOR_REQUIREMENTS.md)の設計方針をUI表現にも反映）。
 
+### 4.10 関節検証パネル（F-RAM-VERIFY、新規、2026-08-08追加）
+
+**目的：** 実機組立検証・キャリブレーション時に、同一関節が持つ3種のセンサ（POT・エンコーダ・ステップ位置）の
+角度値を1画面で相互比較しながら、その場で回転指示を出して挙動を確認できるようにする（動作確認用パネル、
+本番のモーション運用パネルであるF-RAM-CTRLとは目的・UIを分離する）。
+
+#### F-RAM-VERIFY-01: パネル構成（論理軸ごとに1パネル）
+
+論理軸（最大12軸、§3.2）ごとに1パネルを作成し、接続・マッピング済みの全論理軸を常時並べて表示する
+（F-RAM-CTRLのような単一軸選択方式ではなく、関節間の相対関係を見比えられるよう複数パネル同時表示とする）。
+未マッピングの論理軸は「未割当」としてグレーアウトする（F-RAM-MAP-02と同様）。
+
+各パネルは以下の2ブロックで構成する：
+
+**センサ値ブロック（読み取り専用）**
+
+[firmware/REQUIREMENTS.md F-MOT-12](../SteppingMotorDriver/firmware/REQUIREMENTS.md)の
+`GET POS_DEG`/`GET ENC_DEG`/`GET POT_DEG`コマンドを制御アプリがUSB-CDC経由でポーリングし、
+ローカルIPC中継（[design/CONTROL_APP_REQUIREMENTS.md §4.5](../design/CONTROL_APP_REQUIREMENTS.md)）
+で取得する4値を表示する（角度換算・ゼロ位置補正はいずれもファームウェア側で完結しており、本アプリ側では
+一切の換算を行わず受信値をそのまま表示する）：
+
+- POT角度（補正なし）：`pot_deg_raw`
+- POT角度（ゼロ位置補正あり）：`pot_deg_zeroed`
+- エンコーダ角度：`enc_deg`
+- ドライバ角度（ステップ位置ベース）：`pos_deg`
+
+**モータ制御ブロック（制御アプリへのIPC中継、F-RAM-CTRL-00の中継方式を踏襲）**
+
+- プラス回転ボタン／マイナス回転ボタン：押下で`動作ステップ`欄の値に応じて相対回転を発行する
+- 動作ステップ：以下2モードを切替可能とする
+  - 角度モード：固定角度（既定1.0°、UI入力可）だけ`MOVE_DEG`（[design/CONTROL_APP_REQUIREMENTS.md §4.2](../design/CONTROL_APP_REQUIREMENTS.md)）をワンショット発行
+  - 連続モード：ボタン押下中`VEL`を継続発行し離すと`STOP`（既存F-RAM-CTRL-01〜06のジョグ実装をそのまま再利用）
+- 角度入力：絶対角度を入力し実行ボタンで`MOVETO_DEG`を発行する
+- 0位置設定：現在のPOT値をゼロ位置補正として記録する（`POT_ZERO_SET`、[design/CONTROL_APP_REQUIREMENTS.md §4.2](../design/CONTROL_APP_REQUIREMENTS.md)）。現在位置の較正値を不可逆に上書きするため、
+  multi_i2c_bridgeの「0位置設定」（F-RAM-GEAR-04）と同様に実行前確認ダイアログを表示する
+- 0位置クリア：`POT_ZERO_CLEAR`を発行する（既定値へ戻すだけの操作のため確認ダイアログなし、F-RAM-GEAR-04の
+  「0位置クリア」と同様の扱い）
+- 上記いずれの操作も、実際のコマンド発行は制御アプリへのIPC中継経由で行う（F-RAM-CTRL-00）。
+  **制御アプリ未接続時は本パネルのモータ制御ブロック全体をグレーアウトする**（センサ値ブロックも同じ
+  IPC中継経由のため、制御アプリ未接続時はセンサ値も更新されず最終受信値の表示に留まる）。
+
+#### F-RAM-VERIFY-02: 乖離の目視確認（判定なし）
+
+3種の角度（POT ゼロ位置補正あり・エンコーダ・ドライバ）を並べて表示することで、組立誤差・センサ異常・
+脱調等の切り分けをオペレータが目視で行えるようにする。F-RAM-GEAR-03のような自動しきい値判定・警告色は
+本版では設けない（センサ系統・取り付け誤差が個体差として残ることが多く、閾値の妥当性を確立できていないため）。
+
+#### F-RAM-VERIFY-03: 前提条件・依存
+
+本パネルは以下の前提に依存する。いずれか未実装の間は「未対応」表示でフォールバックする：
+
+- ファームウェア側 [F-MOT-12](../SteppingMotorDriver/firmware/REQUIREMENTS.md)（`GET POS_DEG`/`GET ENC_DEG`/`GET POT_DEG`/`MOVE_DEG`/`MOVETO_DEG`/`SET POT_ZERO`/`CLEAR POT_ZERO`）の実装
+- 制御アプリのテレメトリポーリング・IPC中継実装（[design/CONTROL_APP_REQUIREMENTS.md §4.5](../design/CONTROL_APP_REQUIREMENTS.md)）
+- 制御アプリIPCサーバーでの`MOVE_DEG`/`MOVETO_DEG`/`POT_ZERO_SET`/`POT_ZERO_CLEAR`中継実装（[design/CONTROL_APP_REQUIREMENTS.md §4.2](../design/CONTROL_APP_REQUIREMENTS.md)）
+
 ---
 
 ## 5. 非機能要件
@@ -284,10 +340,10 @@ multi_i2c_bridgeに追加された確認用コマンド `ch <0..5> angle`（[usb
 
 トランスポート分離の決定事項・ブローカー撤回の経緯・WiFi方針・残存安全リスクは [design/SYSTEM_REQUIREMENTS.md §4/§6](../design/SYSTEM_REQUIREMENTS.md) を正とする（システム横断の決定であり、robot_arm_monitor固有ではないため）。本章では**本アプリの実装への影響のみ**を記載する。
 
-- [docs/design_spec.md §3](docs/design_spec.md) の `DeviceAdapter` インタフェースはトランスポートをアダプタ内部に隠蔽する設計のため、multi_i2c_bridge向けアダプタ（USB/`serialport`）とSteppingMotorDriver向けアダプタ（Bluetooth/BLEクライアント）を、同じ`DeviceAdapter`実装として上位コードから区別なく扱える。
-- SteppingMotorDriver向けアダプタは、既存の[SteppingMotorDriver/monitor_app](../SteppingMotorDriver/monitor_app/)（USB-CDCベース）のロジックをそのまま移植することはできない（トランスポートがUSBからBLEへ変わるため）。テレメトリのデータモデル（`STATUS`のJSON構造等）は流用できるが、通信層は新規実装が必要。
+- [docs/design_spec.md §3](docs/design_spec.md) の `DeviceAdapter` インタフェースはトランスポートをアダプタ内部に隠蔽する設計のため、multi_i2c_bridge向けアダプタ（USB/`serialport`）は独立した`DeviceAdapter`実装として扱う。
+- **2026-08-09、SteppingMotorDriverのテレメトリ取得経路をBluetooth直接接続からUSB-CDC（制御アプリ経由のローカルIPC中継）へ変更**（[design/SYSTEM_REQUIREMENTS.md §4](../design/SYSTEM_REQUIREMENTS.md)、[design/CONTROL_APP_REQUIREMENTS.md §4.5](../design/CONTROL_APP_REQUIREMENTS.md)）。SteppingMotorDriver向けの`DeviceAdapter`実装（BLE central、`stepping-motor-ble-adapter.ts`）は廃止し、代わりに`ControlAppClient`（`control-app-client.ts`）が制御アプリからの`telemetry`フレームを受信して`MotorSnapshot`を組み立てる。ファームウェア側のBLE/WiFiテレメトリ機能自体（[BLE_WIFI_REQUIREMENTS.md](../SteppingMotorDriver/firmware/BLE_WIFI_REQUIREMENTS.md)）は変更していない。
 - モニタアプリのF-RAM-CTRL操作パネルは、実行を制御アプリへ中継するIPCクライアントとして実装する（§4.4 F-RAM-CTRL-00）。制御アプリ自体は本アプリのスコープ外・別プロジェクトとして実装される前提とする。
-- 本アプリの実装対象外だが機能実現の前提条件となる外部依存（BLEテレメトリサービス、制御アプリ・IPC、Bluetoothペアリングのuxなど）は [design/SYSTEM_REQUIREMENTS.md §6](../design/SYSTEM_REQUIREMENTS.md) に集約し、本書§8ではrobot_arm_monitorへの影響としてのみ再掲する。
+- 本アプリの実装対象外だが機能実現の前提条件となる外部依存（制御アプリ・IPCなど）は [design/SYSTEM_REQUIREMENTS.md §6](../design/SYSTEM_REQUIREMENTS.md) に集約し、本書§8ではrobot_arm_monitorへの影響としてのみ再掲する。
 
 ---
 
@@ -302,13 +358,13 @@ multi_i2c_bridgeに追加された確認用コマンド `ch <0..5> angle`（[usb
 | ~~5~~ | ~~bridge保守コマンド（F-RAM-GEAR-04）のGUI化時期~~（解決済み・方針改訂2026-07-26：当初はトレンドグラフ実装完了後に1コマンドずつ導入する方針だったが、実際は先行して6コマンド全てを一括実装した。実機での個別動作確認が残課題。詳細は§4.5 F-RAM-GEAR-04参照） | ~~Low~~ |
 | ~~6~~ | ~~electron-builder等によるパッケージ化要否~~（解決済み：本アプリの機能実装が完了した後にパッケージ化する。開発中は既存2アプリと同様`npm start`運用とし、パッケージ化を開発の並行タスクにしない） | ~~Low~~ |
 | ~~7~~ | ~~USB通信ブリッジ（ブローカー）方式~~（解決済み：撤回。[design/IF_design.drawio](../design/IF_design.drawio)により、制御アプリ=USB専有、モニタアプリ=Bluetooth（読取専用）+USB(bridge直接)へトランスポート自体を分離する方式に変更。§7） | ~~-~~ |
-| 8〜13 | システム横断の未解決事項（BLEテレメトリサービス未実装、制御アプリ・IPC未設計、Bluetoothペアリングux、WiFi時期、ESTOP残存安全リスク、軸マッピング上限12軸の妥当性）は [design/SYSTEM_REQUIREMENTS.md §6](../design/SYSTEM_REQUIREMENTS.md) に集約管理する（本アプリのPhase6以降のブロッカーとして§9ロードマップに反映） | 集約先を参照 |
+| 8〜13 | システム横断の未解決事項（WiFi時期、ESTOP残存安全リスク、軸マッピング上限12軸の妥当性、制御アプリ自身の要求仕様書未作成）は [design/SYSTEM_REQUIREMENTS.md §6](../design/SYSTEM_REQUIREMENTS.md) に集約管理する（BLEテレメトリサービス・制御アプリIPC・Bluetoothペアリングuxは解消済み、2026-08-09以降テレメトリはUSB-CDC経由に変更） | 集約先を参照 |
 
 ---
 
 ## 9. 開発ロードマップ（案、外部依存を踏まえた順序に更新）
 
-SteppingMotorDriver向け機能（BLEテレメトリ・F-RAM-CTRL中継）は外部依存（[design/SYSTEM_REQUIREMENTS.md §6](../design/SYSTEM_REQUIREMENTS.md) #1, #2）が解消するまで着手できないため、**依存のないmulti_i2c_bridge系統を先行**させる順序に変更する。
+SteppingMotorDriver向け機能（テレメトリ・F-RAM-CTRL中継、いずれも制御アプリのローカルIPC経由）は外部依存（[design/SYSTEM_REQUIREMENTS.md §6](../design/SYSTEM_REQUIREMENTS.md) #1, #2）が解消するまで着手できなかったため、**依存のないmulti_i2c_bridge系統を先行**させる順序に変更した経緯がある（両依存とも解消済み）。
 
 | Phase | 内容 | 状態 | 前提 |
 |-------|------|------|------|
@@ -318,8 +374,9 @@ SteppingMotorDriver向け機能（BLEテレメトリ・F-RAM-CTRL中継）は外
 | 4 | パラメータ設定（F-RAM-PARAM bridge分）・ログ記録（F-RAM-LOG bridge分） | 未着手 | なし |
 | 5 | パッケージ化（electron-builder等、bridge単独運用版として一旦区切る場合） | 未着手 | Phase1〜4完了 |
 | — | *（以下はSteppingMotorDriver向け機能。外部依存解消後に着手）* | | |
-| 6 | SteppingMotorDriver向けBLEアダプタ実装・単一接続確認 | ブロック中 | §8 #8（BLEテレメトリサービス）実装待ち |
+| 6 | SteppingMotorDriver向けテレメトリ受信実装・単一接続確認（2026-08-09以降：制御アプリIPC経由のUSB-CDCポーリング方式、旧BLEアダプタ方式から変更） | 実装済み | なし |
 | 7 | 制御アプリIPC中継クライアント実装・F-RAM-CTRL | ブロック中 | §8 #9（制御アプリ・IPCプロトコル）確定待ち |
 | 8 | 統合ダッシュボード（F-RAM-DASH）・ギア角度中継突合表示（F-RAM-GEAR-01〜03）・全停止集約（F-RAM-CTRL） | ブロック中 | Phase6・7完了 |
 | 9 | トレンドグラフ統合（F-RAM-GRAPH-01〜04）・複数基板同時接続の総合確認 | ブロック中 | Phase8完了 |
-| 10 | 最終パッケージ化 | 未着手 | Phase1〜9完了 |
+| 11 | 関節検証パネル（F-RAM-VERIFY） | 実装済み | Joint Angle表示（2026-08-09以降は制御アプリIPC経由）・角度操作・POTゼロ設定・未対応フォールバックを実装、Phase 11スモークテスト追加 |
+| 10 | 最終パッケージ化 | 未着手 | Phase1〜9・11完了 |

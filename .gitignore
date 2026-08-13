@@ -23,3 +23,11 @@ multi_i2c_bridge/firmware/pico-win-toolchain
 ~*.kicad_pcb
 ~*.kicad_pro
 *-backups/
+
+# Runtime-generated logs (bridge/error CSV dumps from monitor test runs)
+bridge_raw_log_*.csv
+error_log_*.csv
+
+# draw.io editor auto-backups
+*.drawio.bkp
+.$*.bkp

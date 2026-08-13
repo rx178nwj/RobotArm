@@ -79,7 +79,7 @@ export class MultiI2cBridgeAdapter extends EventEmitter implements DeviceAdapter
     });
 
     try {
-      await new Promise<void>((resolve, reject) => port.open(error => error ? reject(error) : resolve()));
+      await this.openWithRetry(port);
       await new Promise<void>((resolve, reject) => port.set({ dtr: true, rts: true }, error => error ? reject(error) : resolve()));
       const parser = port.pipe(new ReadlineParser({ delimiter: "\n" }));
       parser.on("data", (line: string) => this.onLine(line.replace(/\r$/, "")));
@@ -98,6 +98,24 @@ export class MultiI2cBridgeAdapter extends EventEmitter implements DeviceAdapter
       this.emitUpdate();
       if (port.isOpen) port.close();
       throw error;
+    }
+  }
+
+  // The bridge is probed by port-identity.ts right before this call, which opens and closes the
+  // same OS port. On Windows the driver can take a moment to release the handle after close(),
+  // so an immediate reopen here occasionally fails with EACCES/"Access denied" even though no
+  // other process holds the port. Retry a few times with a short backoff before giving up.
+  private async openWithRetry(port: SerialPort, attempts = 5, delayMs = 300): Promise<void> {
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        await new Promise<void>((resolve, reject) => port.open(error => error ? reject(error) : resolve()));
+        return;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const isAccessDenied = /access.?denied|EACCES|EBUSY/i.test(message);
+        if (!isAccessDenied || attempt === attempts) throw error;
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+      }
     }
   }
 

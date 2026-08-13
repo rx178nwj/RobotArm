@@ -13,14 +13,11 @@ export interface PortInfo {
   kindHint?: DeviceKind;
 }
 
-export interface BleDeviceInfo {
-  /** Noble/WinRT peripheral identifier used by connect(). */
-  path: string;
-  name: string;
+/** A SteppingMotorDriver board as reported by control_app over its USB connection. */
+export interface BoardStatus {
   boardId: string;
-  address?: string;
-  rssi: number;
-  serviceUuids: string[];
+  path: string;
+  state: "connected" | "disconnected" | "error";
 }
 
 export interface MotorAxisStatus {
@@ -50,6 +47,14 @@ export interface MotorGearStatus {
   angleDeg: number | null;
   state: GearRelayState;
   deviationDeg?: number | null;
+}
+
+export interface MotorJointAngle {
+  axis: number;
+  posDeg: number | null;
+  encDeg: number | null;
+  potDegRaw: number | null;
+  potDegZeroed: number | null;
 }
 
 export interface BridgeStatus {
@@ -109,6 +114,28 @@ export interface BridgeConfig {
   dirApplied: number;
 }
 
+/** One 10ms-spaced sample from the firmware's FAULT_TRACE ring buffer (GET FAULT_TRACE <axis>). */
+export interface FaultTraceSample {
+  state: string;
+  stepPos: number;
+  encSteps: number;
+  diff: number;
+  vel: number;
+  currentMa: number;
+}
+
+/** A FAULT_TRACE capture pulled right after an EVT FAULT, resolved to a logical axis for display. */
+export interface FaultTraceCapture {
+  boardId: string;
+  localAxis: number;
+  axisLabel: string;
+  logicalAxisId: number | null;
+  intervalMs: number;
+  capturedAt: number;
+  reason?: string;
+  samples: FaultTraceSample[];
+}
+
 export interface RawLogEntry {
   timestamp: number;
   direction: LogDirection;
@@ -147,6 +174,11 @@ export interface MotorSnapshot extends DeviceSnapshot {
   power?: MotorPower;
   fault?: MotorFaultInfo;
   gear: MotorGearStatus[];
+  jointAngle: MotorJointAngle[];
+  /** GET BLE_STATUS ("CONNECTED"/"ADVERTISING"/"DISABLED"/"ERROR") */
+  bleStatus?: string;
+  /** GET HOLD_CURRENT_PERCENT — board-wide DRV_EN chopping duty (1-100), shared by all 3 axes. */
+  holdCurrentPercent?: number;
 }
 
 export interface AxisSnapshot {
@@ -162,6 +194,26 @@ export interface AxisSnapshot {
     velocity: number;
     currentMa: number;
     voltageV: number;
+    /** Reason-derived display code (e.g. "OC-1", "STALL-1", "ESTOP-1"); undefined when not in FAULT. */
+    errorCode?: string;
+    /** Raw EVT FAULT reason ("ESTOP"/"OVERCURRENT"/"STALL"); undefined when not in FAULT. */
+    errorReason?: string;
+    /** Board-wide DRV_EN chopping duty (%), shared by all axes on this board. */
+    holdCurrentPercent?: number;
+  };
+  /** Per-axis communication link health, sourced from the axis's motor board. */
+  comm?: {
+    usb: ConnectionState;
+    i2c: GearRelayState;
+    ble: string;
+  };
+  jointAngle?: {
+    boardId: string;
+    localAxis: number;
+    posDeg: number | null;
+    encDeg: number | null;
+    potDegRaw: number | null;
+    potDegZeroed: number | null;
   };
   gearRelayed?: {
     boardId: string;
@@ -273,6 +325,26 @@ export type ControlCommand =
   | "MOVE"
   | "MOVETO"
   | "VEL"
+  | "MOVE_DEG"
+  | "MOVETO_DEG"
+  | "POT_ZERO_SET"
+  | "POT_ZERO_CLEAR"
+  | "SET_GEAR_RATIO"
+  | "GET_GEAR_RATIO"
+  | "SET_STALL_FAULT"
+  | "GET_STALL_FAULT"
+  | "SET_CURRENT_LIMIT"
+  | "GET_CURRENT_LIMIT"
+  | "SET_MICROSTEP"
+  | "GET_MICROSTEP"
+  | "SET_VMAX"
+  | "GET_VMAX"
+  | "SET_ACCEL"
+  | "GET_ACCEL"
+  | "SET_DECEL"
+  | "GET_DECEL"
+  | "SAVE"
+  | "RECOVER"
   | "SYNC_MOVE";
 
 export interface CommandResult {

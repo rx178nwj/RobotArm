@@ -11,7 +11,7 @@ RobotArm2 の**制御アプリ**（SteppingMotorDriverへのモーション制�
 | 関連（外部） | [robot_arm_monitor/REQUIREMENTS.md](../robot_arm_monitor/REQUIREMENTS.md) §4.4 F-RAM-CTRL（本書が実装する中継方式の消費側要件） |
 | 関連（外部） | [robot_arm_monitor/docs/design_spec.md](../robot_arm_monitor/docs/design_spec.md) §3.5（`ControlAppClient`暫定インタフェース、本書で正式化） |
 | 関連（外部） | [SteppingMotorDriver/firmware/REQUIREMENTS.md](../SteppingMotorDriver/firmware/REQUIREMENTS.md) §4（制御アプリがUSB-CDC経由で発行するコマンドセットの唯一の正） |
-| 版 | 0.1（初版） |
+| 版 | 0.2（テレメトリ中継を追加、§4.5・2026-08-09） |
 | 作成日 | 2026-07-26 |
 
 ---
@@ -21,11 +21,13 @@ RobotArm2 の**制御アプリ**（SteppingMotorDriverへのモーション制�
 ### 1.1 目的
 
 [design/SYSTEM_REQUIREMENTS.md §4](SYSTEM_REQUIREMENTS.md) の確定方針により、SteppingMotorDriverへの
-USB-CDC接続は制御アプリが専有し、モニタアプリはBluetooth（読み取り専用）しか持たない。そのため
+USB-CDC接続は制御アプリが専有し、モニタアプリは直接接続を持たない。そのため
 モニタアプリのモーション制御パネル（`robot_arm_monitor/REQUIREMENTS.md` F-RAM-CTRL）は、実際の
-コマンド発行を**ローカルIPC経由で制御アプリへ中継**する（F-RAM-CTRL-00）。
+コマンド発行を**ローカルIPC経由で制御アプリへ中継**する（F-RAM-CTRL-00）。**2026-08-09以降は
+テレメトリ（軸状態・位置・エンコーダ・電流電圧・関節角度・ギア角度）も同じIPC経由で制御アプリから
+モニタアプリへ中継する**（§4.5、旧方式のBluetooth直接接続を置き換え）。
 
-本書はこのIPC中継の**プロトコル・接続方式・コマンドマッピング**を定義し、
+本書はこのIPC中継の**プロトコル・接続方式・コマンドマッピング・テレメトリ中継**を定義し、
 [design/SYSTEM_REQUIREMENTS.md §6 #2](SYSTEM_REQUIREMENTS.md) を解消する。
 
 ### 1.2 スコープ
@@ -52,12 +54,12 @@ USB-CDC接続は制御アプリが専有し、モニタアプリはBluetooth（�
 
 ```
         モニタアプリ（robot_arm_monitor）        制御アプリ（新規）
-        ┌───────────────────────┐    ローカルIPC    ┌───────────────────────┐
-        │ ControlAppClient      │◄───(本書§3)──────►│ IPC Server            │
-        └──────┬────────────────┘                  └──────┬────────────────┘
-               │Bluetooth(読取専用)                        │USB-CDC(専有)
-               ▼                                          ▼
-        SteppingMotorDriver0-2 ◄──────────────────────────┘
+        ┌───────────────────────┐ ローカルIPC(コマンド+テレメトリ) ┌───────────────────────┐
+        │ ControlAppClient      │◄───────(本書§3・§4.5)──────────►│ IPC Server            │
+        └────────────────────────┘                              └──────┬────────────────┘
+                                                                        │USB-CDC(専有)
+                                                                        ▼
+                                                                 SteppingMotorDriver0-2
 ```
 
 - モニタアプリ・制御アプリは**同一PC上で動作する別プロセス**（同一ホスト、ネットワーク越しの通信は想定しない）。
@@ -135,6 +137,10 @@ IPCリクエストは**論理軸番号ではなく、基板固有ID（factory MA
 | `MOVETO` | `[pos]` | `MOVETO <axis> <pos>` | |
 | `VEL` | `[speed]` | `VEL <axis> <speed>` | ジョグ操作はこのコマンドを継続発行する想定（[robot_arm_monitor/REQUIREMENTS.md F-RAM-CTRL-01〜06](../robot_arm_monitor/REQUIREMENTS.md)のジョグ操作） |
 | `SYNC_MOVE` | `[[axis0,steps0],[axis1,steps1],...]` | `SYNC_MOVE <n> <ax0> <st0>...` | 同一基板内の複数軸を指定。基板をまたぐ同期移動は本書では扱わない（実機コマンド自体が単一基板内のみのため） |
+| `MOVE_DEG` | `[deg]` | `MOVE_DEG <axis> <deg>` | 相対移動（度単位、[firmware/REQUIREMENTS.md F-MOT-12](../SteppingMotorDriver/firmware/REQUIREMENTS.md)）。[robot_arm_monitor/REQUIREMENTS.md F-RAM-VERIFY](../robot_arm_monitor/REQUIREMENTS.md)の関節検証パネルが使用 |
+| `MOVETO_DEG` | `[deg]` | `MOVETO_DEG <axis> <deg>` | 絶対位置移動（度単位、同上） |
+| `POT_ZERO_SET` | - | `SET POT_ZERO <axis>` | POTゼロ位置補正（現在値を記録、不可逆操作。同上F-RAM-VERIFY） |
+| `POT_ZERO_CLEAR` | - | `CLEAR POT_ZERO <axis>` | POTゼロ位置補正のクリア（同上） |
 
 - `ESTOP`は上記の個別コマンドとは別枠（`type: "estop"`、引数なし、対象基板を指定しない）。制御アプリが
   **接続中の全SteppingMotorDriver基板**へ同時にESTOPを発行し、基板ごとの結果を集約して返す
@@ -165,6 +171,42 @@ BLE経由のテレメトリ（10Hz周期の状態値）を補完するもので�
 - 制御アプリ側のコマンドタイムアウト（実機無応答）は5000ms（[firmware/REQUIREMENTS.md](../SteppingMotorDriver/firmware/REQUIREMENTS.md)
   の`SET COMM_TIMEOUT`デフォルト値に合わせる）とし、タイムアウト時は`{"ok":false,"error":"TIMEOUT"}`を返す。
 
+### 4.5 テレメトリ中継（2026-08-09新設）
+
+[design/SYSTEM_REQUIREMENTS.md §4](SYSTEM_REQUIREMENTS.md) の2026-08-09改訂により、モニタアプリの
+SteppingMotorDriverテレメトリ取得経路をBluetooth直接接続からUSB-CDC（本書のIPC中継）へ変更した。
+旧BLEテレメトリサービス（[BLE_WIFI_REQUIREMENTS.md](../SteppingMotorDriver/firmware/BLE_WIFI_REQUIREMENTS.md)）
+が提供していた全フィールドは、[firmware/REQUIREMENTS.md §4.3](../SteppingMotorDriver/firmware/REQUIREMENTS.md)の
+既存USB-CDC状態取得コマンドの組み合わせで再現できるため、**ファームウェア変更は不要**。
+
+**ポーリング方式：** 制御アプリは、USB-CDC接続中の各SteppingMotorDriver基板ごとに、既定1000ms間隔で
+以下のGETコマンド列を順次発行し（モーションコマンドと同じ`BoardConnection`の直列キューに乗せる）、
+1周期分の結果をまとめてIPCクライアントへ非同期送信する：
+
+| 対応フィールド | 発行するUSB-CDCコマンド |
+|---|---|
+| axes（axis/state/pos/vel/enc） | `GET STATE <axis>`,`GET POS <axis>`,`GET VEL <axis>`,`GET ENC <axis>` ×3軸 |
+| power（pot[3]/current_mA/voltage_mV） | `GET ADC 0`,`GET ADC 1`,`GET ADC 2`,`GET ADC 3`（×1000でmV換算）,`GET ADC 4` |
+| fault（reason/axis_mask/timestamp_us） | `GET FAULT_INFO` |
+| jointAngle（posDeg/encDeg/potDegRaw/potDegZeroed） | `GET POS_DEG <axis>`,`GET ENC_DEG <axis>`,`GET POT_DEG <axis>` ×3軸 |
+| gear（axis/angleDeg/state/deviationDeg） | `GET GEAR_STATUS`（全軸一括） |
+
+**フレーム形式：** IPC経由で以下の非同期フレームをモニタアプリへ送信する（`id`は付与しない、コマンド
+応答とは独立した非同期通知）：
+
+```
+← {"type":"telemetry","boardId":"AABBCCDDEEFF","axes":[...],"power":{...},"fault":{...},"gear":[...],"jointAngle":[...]}\n
+```
+
+- `axes`/`jointAngle`/`gear`はUSB-CDCから取得した値をそのままJSON化したもの（フィールド名はモニタアプリ
+  側`MotorSnapshot`の対応する型と1:1、camelCase）。
+- 1基板あたり1周期で計20コマンドの往復が発生する（軸3・チャンネル5・全軸一括コマンドの内訳は上表参照）。
+  ポーリング間隔はモーションコマンドの応答性とのトレードオフであり、実機確認後にチューニング可能な
+  定数として実装する（既定値1000ms）。
+- GETコマンドはファームウェアの同時コマンドポリシー上、モーション実行中でも常に受理される
+  （[firmware/REQUIREMENTS.md](../SteppingMotorDriver/firmware/REQUIREMENTS.md)の同時コマンドポリシー表）
+  ため、テレメトリポーリングとモーション制御コマンドの同一キュー共有は安全である。
+
 ---
 
 ## 5. 接続ライフサイクル
@@ -179,6 +221,7 @@ export interface ControlAppClient extends EventEmitter {
   sendEstop(): Promise<EstopResult>;
   on(event: "connectionChanged", listener: (connected: boolean) => void): this;
   on(event: "controlEvent", listener: (e: { boardId: string; event: string; axis?: number }) => void): this;
+  on(event: "telemetry", listener: (snapshot: MotorSnapshot) => void): this; // §4.5
 }
 ```
 
