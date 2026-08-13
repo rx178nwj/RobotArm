@@ -36,7 +36,6 @@ export class DeviceManager {
   private loggingSnapshot?: (snapshot: BridgeSnapshot) => void;
   private loggingError?: (message: string) => void;
   private readonly loggingErrorBoards = new Set<string>();
-  private controlAppBoards: BoardStatus[] = [];
 
   constructor(
     private readonly onUpdate: (snapshot: DeviceSnapshot) => void,
@@ -45,9 +44,7 @@ export class DeviceManager {
     private readonly onRobotArmUpdate?: (snapshot: RobotArmSnapshot) => void,
     private readonly onFaultTrace?: (capture: FaultTraceCapture) => void
   ) {
-    this.controlAppBoards = controlClient.boards;
     controlClient.on("boardsChanged", boards => {
-      this.controlAppBoards = boards;
       const connected = new Set(boards.filter(board => board.state === "connected").map(board => board.boardId));
       for (const [boardId, snapshot] of this.latestSnapshots) {
         if (snapshot.kind !== "stepping_motor_driver" || snapshot.state === "disconnected") continue;
@@ -64,7 +61,7 @@ export class DeviceManager {
   }
 
   getControlAppBoards(): BoardStatus[] {
-    return this.controlAppBoards;
+    return this.controlClient.boards;
   }
 
   getRobotArmSnapshot(): RobotArmSnapshot {

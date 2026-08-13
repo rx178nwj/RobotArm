@@ -92,6 +92,10 @@ export class ControlIpcServer extends EventEmitter {
     });
     this.emit("clientConnectionChanged", true);
     this.emit("log", "IPC client connected");
+    this.send(
+      { type: "connection_changed", boards: this.manager.getBoards() } satisfies ConnectionChangedFrame,
+      socket
+    );
   }
 
   private handleData(socket: net.Socket, chunk: string): void {

@@ -152,13 +152,17 @@ export class BoardConnection extends EventEmitter {
       const pos = await this.request(`GET POS ${axis}`);
       const vel = await this.request(`GET VEL ${axis}`);
       const enc = await this.request(`GET ENC ${axis}`);
-      if (!state.ok || !pos.ok || !vel.ok || !enc.ok) return undefined;
+      if (!state.ok || !pos.ok || !vel.ok) return undefined;
+      // OPEN_LOOP axes have no encoder; firmware rejects GET ENC with E002 INVALID_PARAM
+      // for them (comm.c). That's expected, not a poll failure — report 0 for that axis
+      // instead of discarding the whole snapshot.
+      if (!enc.ok && enc.error !== "E002") return undefined;
       axes.push({
         axis,
         state: (state.data ?? "").trim(),
         pos: Number(pos.data),
         vel: Number(vel.data),
-        enc: Number(enc.data)
+        enc: enc.ok ? Number(enc.data) : 0
       });
     }
     return axes;
