@@ -333,6 +333,8 @@ export type ControlCommand =
   | "GET_GEAR_RATIO"
   | "SET_MOTOR_TYPE"
   | "GET_MOTOR_TYPE"
+  | "SET_DRIVER_TYPE"
+  | "GET_DRIVER_TYPE"
   | "SET_STALL_FAULT"
   | "GET_STALL_FAULT"
   | "SET_CURRENT_LIMIT"

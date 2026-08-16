@@ -336,10 +336,20 @@ input { flex: 1; min-width: 0; color: #e8edf5; background: #0c1522; border: 1px 
   border: 1px solid #304058; border-radius: 6px; background: #0c1522;
 }
 .motor-type-actions { display: flex; gap: 6px; white-space: nowrap; }
+.driver-type-table-wrap { overflow-x: auto; margin-top: 14px; border: 1px solid #25344b; border-radius: 9px; }
+.driver-type-table { width: 100%; min-width: 640px; border-collapse: collapse; }
+.driver-type-table th { padding: 9px; color: #71839c; background: #0d1725; font-size: 11px; text-align: left; text-transform: uppercase; }
+.driver-type-table td { padding: 7px; border-top: 1px solid #1f2d42; font-size: 13px; }
+.driver-type-table td:first-child small { display: block; margin-top: 2px; color: #8796ac; }
+.driver-type-table select {
+  min-width: 220px; padding: 7px 8px; color: #e8edf5;
+  border: 1px solid #304058; border-radius: 6px; background: #0c1522;
+}
+.driver-type-actions { display: flex; gap: 6px; white-space: nowrap; }
 .driver-settings-subheading { margin: 18px 0 4px; font-size: 13px; }
 .driver-settings-subheading small { display: block; margin-top: 3px; font-weight: normal; color: #8796ac; }
-.board-group .gear-ratio-table-wrap, .board-group .motion-profile-table-wrap, .board-group .motor-type-table-wrap { min-width: 0; }
-.board-group .gear-ratio-table, .board-group .motion-profile-table, .board-group .motor-type-table { min-width: 0; }
+.board-group .gear-ratio-table-wrap, .board-group .motion-profile-table-wrap, .board-group .motor-type-table-wrap, .board-group .driver-type-table-wrap { min-width: 0; }
+.board-group .gear-ratio-table, .board-group .motion-profile-table, .board-group .motor-type-table, .board-group .driver-type-table { min-width: 0; }
 .motion-profile-table-wrap { overflow-x: auto; margin-top: 8px; border: 1px solid #25344b; border-radius: 9px; }
 .motion-profile-table { width: 100%; min-width: 760px; border-collapse: collapse; }
 .motion-profile-table th { padding: 9px; color: #71839c; background: #0d1725; font-size: 11px; text-align: left; text-transform: uppercase; }

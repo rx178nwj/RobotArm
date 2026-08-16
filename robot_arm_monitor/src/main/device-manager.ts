@@ -634,6 +634,14 @@ function validMotorType(value: unknown): number {
   return number;
 }
 
+const VALID_DRIVER_TYPES = new Set([0, 1]);
+
+function validDriverType(value: unknown): number {
+  const number = Number(value);
+  if (!VALID_DRIVER_TYPES.has(number)) throw new Error("Driver type must be 0 (ONBOARD) or 1 (EXTERNAL)");
+  return number;
+}
+
 function validateControlArgs(
   command: ControlCommandRequest["command"],
   args: unknown[] | undefined
@@ -677,6 +685,11 @@ function validateControlArgs(
         throw new Error(`${command} requires exactly one argument`);
       }
       return [validMotorType(args[0])];
+    case "SET_DRIVER_TYPE":
+      if (!Array.isArray(args) || args.length !== 1) {
+        throw new Error(`${command} requires exactly one argument`);
+      }
+      return [validDriverType(args[0])];
     case "SET_VMAX":
     case "SET_ACCEL":
     case "SET_DECEL":
@@ -694,6 +707,7 @@ function validateControlArgs(
     case "POT_ZERO_CLEAR":
     case "GET_GEAR_RATIO":
     case "GET_MOTOR_TYPE":
+    case "GET_DRIVER_TYPE":
     case "GET_STALL_FAULT":
     case "GET_CURRENT_LIMIT":
     case "GET_MICROSTEP":

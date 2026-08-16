@@ -449,6 +449,31 @@ function renderDriverSettingsPanel(): void {
           </tbody>
         </table>
       </div>
+      <h4 class="driver-settings-subheading">ドライバタイプ<small>SET/GET DRIVER_TYPE・軸ごと・モーション停止中のみ変更可能・外付けドライバはSTEP/DIR極性反転</small></h4>
+      <div class="driver-type-table-wrap">
+        <table class="driver-type-table">
+          <thead>
+            <tr><th>論理軸</th><th>基板内Axis</th><th>ドライバタイプ</th><th>操作</th></tr>
+          </thead>
+          <tbody>
+            ${axes.map(axis => `
+            <tr data-driver-type-row="${axis.axisId}">
+              <td><strong>${esc(axis.label || `Axis ${axis.axisId}`)}</strong><small>論理軸 ${axis.axisId}</small></td>
+              <td>Axis ${axis.motorLocalAxis}</td>
+              <td>
+                <select data-driver-type-input="${axis.axisId}" ${ready ? "" : "disabled"}>
+                  <option value="0" selected>ONBOARD（DRV8825直結）</option>
+                  <option value="1">EXTERNAL（外付けドライバ・フォトカプラ経由）</option>
+                </select>
+              </td>
+              <td class="driver-type-actions">
+                <button data-driver-type-get="${axis.axisId}" ${ready ? "" : "disabled"}>取得</button>
+                <button data-driver-type-set="${axis.axisId}" ${ready ? "" : "disabled"}>設定</button>
+              </td>
+            </tr>`).join("")}
+          </tbody>
+        </table>
+      </div>
       <h4 class="driver-settings-subheading">モーションプロファイル<small>SET VMAX/ACCEL/DECEL・軸ごと・モーション停止中のみ変更可能</small></h4>
       <div class="motion-profile-table-wrap">
         <table class="motion-profile-table">
@@ -491,6 +516,7 @@ function bindDriverSettingsControls(): void {
   });
   bindGearRatioControls();
   bindMotorTypeControls();
+  bindDriverTypeControls();
   bindMotionProfileControls();
   document.querySelectorAll<HTMLButtonElement>("[data-driver-board-save]").forEach(button => {
     button.onclick = () => void boardSave(
@@ -626,6 +652,52 @@ async function motorTypeSet(axisId: number): Promise<void> {
   }
 }
 
+function bindDriverTypeControls(): void {
+  document.querySelectorAll<HTMLButtonElement>("[data-driver-type-get]").forEach(button => {
+    button.onclick = () => void driverTypeGet(Number(button.dataset.driverTypeGet));
+  });
+  document.querySelectorAll<HTMLButtonElement>("[data-driver-type-set]").forEach(button => {
+    button.onclick = () => void driverTypeSet(Number(button.dataset.driverTypeSet));
+  });
+}
+
+async function driverTypeGet(axisId: number): Promise<void> {
+  try {
+    const result = await window.robotArmApi.sendControlCommand({ logicalAxis: axisId, command: "GET_DRIVER_TYPE" });
+    if (result.ok && result.message) {
+      const select = document.querySelector<HTMLSelectElement>(`[data-driver-type-input="${axisId}"]`);
+      if (select) select.value = result.message.trim();
+    }
+    setDriverSettingsMessage(
+      result.ok
+        ? `GET_DRIVER_TYPE · Axis ${axisId} → OK${result.message ? ` ${result.message}` : ""}`
+        : `GET_DRIVER_TYPE · Axis ${axisId} → ERR ${result.error ?? "UNKNOWN"}${result.message ? ` ${result.message}` : ""}`,
+      !result.ok
+    );
+  } catch (error) {
+    setDriverSettingsMessage(`GET_DRIVER_TYPE失敗: ${errorText(error)}`, true);
+  }
+}
+
+async function driverTypeSet(axisId: number): Promise<void> {
+  const value = Number(document.querySelector<HTMLSelectElement>(`[data-driver-type-input="${axisId}"]`)?.value);
+  if (value !== 0 && value !== 1) {
+    setDriverSettingsMessage("ドライバタイプはONBOARDまたはEXTERNALを選択してください。", true);
+    return;
+  }
+  try {
+    const result = await window.robotArmApi.sendControlCommand({ logicalAxis: axisId, command: "SET_DRIVER_TYPE", args: [value] });
+    setDriverSettingsMessage(
+      result.ok
+        ? `SET_DRIVER_TYPE · Axis ${axisId} → OK`
+        : `SET_DRIVER_TYPE · Axis ${axisId} → ERR ${result.error ?? "UNKNOWN"}${result.message ? ` ${result.message}` : ""}`,
+      !result.ok
+    );
+  } catch (error) {
+    setDriverSettingsMessage(`SET_DRIVER_TYPE失敗: ${errorText(error)}`, true);
+  }
+}
+
 function bindMotionProfileControls(): void {
   document.querySelectorAll<HTMLButtonElement>("[data-motion-get]").forEach(button => {
     button.onclick = () => void motionProfileGet(Number(button.dataset.motionGet));
@@ -715,6 +787,17 @@ async function autoLoadDriverSettings(): Promise<void> {
         const result = await window.robotArmApi.sendControlCommand({ logicalAxis: axis.axisId, command: "GET_MOTOR_TYPE" });
         if (result.ok && result.message) {
           const select = document.querySelector<HTMLSelectElement>(`[data-motor-type-input="${axis.axisId}"]`);
+          if (select) select.value = result.message.trim();
+        }
+      } catch {
+        // Best-effort auto-load; manual refresh remains available if this fails.
+      }
+    }
+    for (const axis of axes) {
+      try {
+        const result = await window.robotArmApi.sendControlCommand({ logicalAxis: axis.axisId, command: "GET_DRIVER_TYPE" });
+        if (result.ok && result.message) {
+          const select = document.querySelector<HTMLSelectElement>(`[data-driver-type-input="${axis.axisId}"]`);
           if (select) select.value = result.message.trim();
         }
       } catch {
